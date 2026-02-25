@@ -1,0 +1,547 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTB BI-F Chart</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="chart-container">
+        <!-- Top Bar -->
+        <div class="top-bar">
+            <div class="asset-info" title="Источник данных — биржа">
+                <span class="asset-icon">P</span>
+                <span class="asset-name" id="exchangeName">—</span>
+            </div>
+            <div class="metrics">
+                <div class="metric" id="metricPriceChange" title="Изменение цены: процент изменения от цены открытия первой свечи до цены закрытия последней за период графика">
+                    <span class="metric-icon">↑</span>
+                    <span class="metric-value" id="metricPriceChangeValue">—</span>
+                </div>
+                <div class="metric" id="metricPriceRange" title="Ренж цены: размах цен за период — от минимума (Low) до максимума (High) в процентах от минимума">
+                    <span class="metric-icon">↗</span>
+                    <span class="metric-value" id="metricPriceRangeValue">—</span>
+                </div>
+                <div class="metric metric-yellow" id="metricVolatility" title="Волатильность: средняя амплитуда колебаний свечей (High − Low) относительно цены закрытия в процентах">
+                    <span class="metric-icon">⚡</span>
+                    <span class="metric-value" id="metricVolatilityValue">—</span>
+                </div>
+                <div class="metric" id="metricVolume" title="Объём: суммарный объём торгов по всем свечам за выбранный период (K — тысячи, M — миллионы, B — миллиарды)">
+                    <span class="metric-icon">📊</span>
+                    <span class="metric-value" id="metricVolumeValue">—</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- Timeframe and Chart Tools Bar -->
+        <div class="timeframe-bar">
+            <div class="timeframe-buttons">
+                <button class="timeframe-btn" data-interval="3m">3M</button>
+                <button class="timeframe-btn" data-interval="5m">5M</button>
+                <button class="timeframe-btn" data-interval="15m">15M</button>
+                <button class="timeframe-btn" data-interval="30m">30M</button>
+                <button class="timeframe-btn" data-interval="1h">1Ч</button>
+                <button class="timeframe-btn" data-interval="2h">2Ч</button>
+                <button class="timeframe-btn" data-interval="4h">4Ч</button>
+                <button class="timeframe-btn" data-interval="1d">Д</button>
+            </div>
+            <div class="chart-tools">
+                <button class="chart-tool-btn indicators-icon-btn" title="Индикаторы" id="indicatorsBtn"><span class="indicators-icon">≡</span></button>
+            </div>
+        </div>
+
+        <!-- Indicators Modal -->
+        <div class="indicators-modal" id="indicatorsModal">
+            <div class="indicators-modal-content">
+                <button class="indicators-modal-close" id="indicatorsModalClose">×</button>
+                <div class="indicators-modal-tabs">
+                    <button class="indicators-tab active" data-tab="main">Главный индикатор</button>
+                    <button class="indicators-tab" data-tab="sub">Субиндикатор</button>
+                </div>
+                <div class="indicators-modal-body">
+                    <!-- Главный индикатор: список + панели -->
+                    <div class="indicators-tab-content" id="indicatorsMainContent">
+                    <div class="indicators-list">
+                        <div class="indicators-list-title">Main</div>
+                        <label class="indicator-item selected" data-indicator="MA"><input type="checkbox" name="indicator" value="MA"> MA</label>
+                        <label class="indicator-item" data-indicator="EMA"><input type="checkbox" name="indicator" value="EMA"> EMA</label>
+                        <label class="indicator-item" data-indicator="WMA"><input type="checkbox" name="indicator" value="WMA"> WMA</label>
+                        <label class="indicator-item" data-indicator="BOLL"><input type="checkbox" name="indicator" value="BOLL"> BOLL</label>
+                        <label class="indicator-item" data-indicator="VWAP"><input type="checkbox" name="indicator" value="VWAP"> VWAP</label>
+                        <label class="indicator-item" data-indicator="MACD"><input type="checkbox" name="indicator" value="MACD"> MACD</label>
+                        <label class="indicator-item" data-indicator="RSI"><input type="checkbox" name="indicator" value="RSI"> RSI</label>
+                        <label class="indicator-item" data-indicator="TRIX"><input type="checkbox" name="indicator" value="TRIX"> TRIX</label>
+                        <label class="indicator-item" data-indicator="SUPER"><input type="checkbox" name="indicator" value="SUPER"> SUPER</label>
+                            <label class="indicator-item" data-indicator="SAR"><input type="checkbox" name="indicator" value="SAR"> SAR</label>
+                    </div>
+                    <div class="indicators-config" id="mainIndicatorsConfig">
+                        <div class="indicators-config-title" id="indicatorsConfigTitle">MA - Средняя скользящая</div>
+                        <div class="ma-config indicator-config-panel" id="maConfig">
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="ma1en" data-ma="1">
+                                <span>MA1</span>
+                                <input type="number" id="ma1period" value="7" min="1" max="500">
+                                <select id="ma1source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                                <span class="line-thickness-picker"><select id="ma1width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ma1width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="ma1color" value="#ffeb3b">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="ma2en" data-ma="2">
+                                <span>MA2</span>
+                                <input type="number" id="ma2period" value="25" min="1" max="500">
+                                <select id="ma2source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                                <span class="line-thickness-picker"><select id="ma2width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ma2width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="ma2color" value="#e91e63">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="ma3en" data-ma="3">
+                                <span>MA3</span>
+                                <input type="number" id="ma3period" value="99" min="1" max="500">
+                                <select id="ma3source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                                <span class="line-thickness-picker"><select id="ma3width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ma3width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="ma3color" value="#9c27b0">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="ma4en" data-ma="4">
+                                <span>MA4</span>
+                                <input type="number" id="ma4period" value="0" min="0" max="500">
+                                <select id="ma4source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                                <span class="line-thickness-picker"><select id="ma4width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ma4width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="ma4color" value="#f44336">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="ma5en" data-ma="5">
+                                <span>MA5</span>
+                                <input type="number" id="ma5period" value="0" min="0" max="500">
+                                <select id="ma5source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                                <span class="line-thickness-picker"><select id="ma5width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ma5width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="ma5color" value="#4caf50">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="ma6en" data-ma="6">
+                                <span>MA6</span>
+                                <input type="number" id="ma6period" value="0" min="0" max="500">
+                                <select id="ma6source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                                <span class="line-thickness-picker"><select id="ma6width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ma6width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="ma6color" value="#ff9800">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel" id="emaConfig" style="display:none;">
+                            <div class="ma-line-config"><input type="checkbox" id="ema1en"><span>EMA1</span><input type="number" id="ema1period" value="7" min="1" max="500"><select id="ema1source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="ema1width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ema1width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="ema1color" value="#ffeb3b"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="ema2en"><span>EMA2</span><input type="number" id="ema2period" value="25" min="1" max="500"><select id="ema2source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="ema2width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ema2width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="ema2color" value="#e91e63"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="ema3en"><span>EMA3</span><input type="number" id="ema3period" value="99" min="1" max="500"><select id="ema3source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="ema3width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ema3width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="ema3color" value="#9c27b0"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="ema4en"><span>EMA4</span><input type="number" id="ema4period" value="0" min="0" max="500"><select id="ema4source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="ema4width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ema4width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="ema4color" value="#f44336"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="ema5en"><span>EMA5</span><input type="number" id="ema5period" value="0" min="0" max="500"><select id="ema5source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="ema5width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ema5width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="ema5color" value="#4caf50"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="ema6en"><span>EMA6</span><input type="number" id="ema6period" value="0" min="0" max="500"><select id="ema6source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="ema6width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="ema6width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="ema6color" value="#ff9800"></div>
+                        </div>
+                        <div class="indicator-config-panel" id="wmaConfig" style="display:none;">
+                            <div class="ma-line-config"><input type="checkbox" id="wma1en"><span>WMA1</span><input type="number" id="wma1period" value="7" min="1" max="500"><select id="wma1source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="wma1width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="wma1width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="wma1color" value="#ffeb3b"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="wma2en"><span>WMA2</span><input type="number" id="wma2period" value="25" min="1" max="500"><select id="wma2source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="wma2width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="wma2width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="wma2color" value="#e91e63"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="wma3en"><span>WMA3</span><input type="number" id="wma3period" value="99" min="1" max="500"><select id="wma3source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="wma3width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="wma3width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="wma3color" value="#9c27b0"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="wma4en"><span>WMA4</span><input type="number" id="wma4period" value="0" min="0" max="500"><select id="wma4source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="wma4width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="wma4width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="wma4color" value="#f44336"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="wma5en"><span>WMA5</span><input type="number" id="wma5period" value="0" min="0" max="500"><select id="wma5source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="wma5width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="wma5width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="wma5color" value="#4caf50"></div>
+                            <div class="ma-line-config"><input type="checkbox" id="wma6en"><span>WMA6</span><input type="number" id="wma6period" value="0" min="0" max="500"><select id="wma6source"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select><span class="line-thickness-picker"><select id="wma6width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="wma6width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span><input type="color" id="wma6color" value="#ff9800"></div>
+                        </div>
+                        <div class="indicator-config-panel" id="bollConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="bollEn" checked>
+                                <label>Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Период</label>
+                                <input type="number" id="bollPeriod" value="20" min="2" max="500">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Стд. откл.</label>
+                                <input type="number" id="bollStd" value="2" min="0.5" max="5" step="0.1">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Верх</label>
+                                <input type="color" id="bollColorUpper" value="#2196f3">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Средняя</label>
+                                <input type="color" id="bollColorMid" value="#ff9800">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Низ</label>
+                                <input type="color" id="bollColorLower" value="#2196f3">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel" id="vwapConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="vwapEn" checked>
+                                <label>Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Цвет</label>
+                                <input type="color" id="vwapColor" value="#00bcd4">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel" id="macdConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="macdEn" checked>
+                                <label>Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Быстрый</label>
+                                <input type="number" id="macdFast" value="12" min="1" max="100">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Медленный</label>
+                                <input type="number" id="macdSlow" value="26" min="1" max="100">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Сигнал</label>
+                                <input type="number" id="macdSignal" value="9" min="1" max="50">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Цвет MACD</label>
+                                <input type="color" id="macdColorMacd" value="#2196f3">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Цвет сигнала</label>
+                                <input type="color" id="macdColorSignal" value="#ff9800">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel" id="rsiConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="rsiEn" checked>
+                                <label>Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Период</label>
+                                <input type="number" id="rsiPeriod" value="14" min="2" max="100">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Цвет</label>
+                                <input type="color" id="rsiColor" value="#9c27b0">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel" id="trixConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="trixEn" checked>
+                                <label>Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Период</label>
+                                <input type="number" id="trixPeriod" value="15" min="1" max="200">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Цвет</label>
+                                <input type="color" id="trixColor" value="#00bcd4">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel" id="superConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="superEn" checked>
+                                <label>Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Период</label>
+                                <input type="number" id="superPeriod" value="10" min="1" max="100">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Множитель</label>
+                                <input type="number" id="superMultiplier" value="3" min="0.1" max="10" step="0.1">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Цвет</label>
+                                <input type="color" id="superColor" value="#f44336">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel" id="sarConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="sarEn" checked>
+                                <label>Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Шаг</label>
+                                <input type="number" id="sarStep" value="0.02" min="0.01" max="0.2" step="0.01">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Макс.</label>
+                                <input type="number" id="sarMax" value="0.2" min="0.1" max="0.5" step="0.01">
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Цвет</label>
+                                <input type="color" id="sarColor" value="#f44336">
+                            </div>
+                        </div>
+                    </div>
+                    </div>
+                    <!-- Субиндикатор: список + панели -->
+                    <div class="indicators-tab-content" id="indicatorsSubContent" style="display:none;">
+                    <div class="indicators-list">
+                        <div class="indicators-list-title">Sub</div>
+                        <label class="sub-indicator-item" data-sub="VOL"><input type="checkbox" name="subindicator" value="VOL"> VOL <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="MACD"><input type="checkbox" name="subindicator" value="MACD"> MACD <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="RSI"><input type="checkbox" name="subindicator" value="RSI"> RSI <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="MFI"><input type="checkbox" name="subindicator" value="MFI"> MFI <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="KDJ"><input type="checkbox" name="subindicator" value="KDJ"> KDJ <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="OBV"><input type="checkbox" name="subindicator" value="OBV"> OBV <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="CCI"><input type="checkbox" name="subindicator" value="CCI"> CCI <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="StochRSI"><input type="checkbox" name="subindicator" value="StochRSI"> StochRSI <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="WR"><input type="checkbox" name="subindicator" value="WR"> WR <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="DMI"><input type="checkbox" name="subindicator" value="DMI"> DMI <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="MTM"><input type="checkbox" name="subindicator" value="MTM"> MTM <span class="sub-indicator-arrow">&gt;</span></label>
+                        <label class="sub-indicator-item" data-sub="EMV"><input type="checkbox" name="subindicator" value="EMV"> EMV <span class="sub-indicator-arrow">&gt;</span></label>
+                    </div>
+                    <div class="indicators-config" id="subIndicatorsConfig">
+                        <div class="indicators-config-title" id="subIndicatorsConfigTitle">Vol - Объём</div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subVolConfig">
+                            <p class="indicator-description">MAVOL означает, что объём за определённый период суммируется и усредняется, создавая более плавную кривую на гистограмме объёма — кривую среднего объёма.</p>
+                            <div class="indicator-param-row">
+                                <label>Long</label>
+                                <select id="subVolLong"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label>Short</label>
+                                <select id="subVolShort"><option value="close">Закр.</option><option value="open">Откр.</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subVolMavol1en">
+                                <span>MAVOL1</span>
+                                <input type="number" id="subVolMavol1period" min="1" max="500" placeholder="7">
+                                <span class="line-thickness-picker"><select id="subVolMavol1width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subVolMavol1width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subVolMavol1color" value="#03a9f4">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subVolMavol2en">
+                                <span>MAVOL2</span>
+                                <input type="number" id="subVolMavol2period" min="1" max="500" placeholder="14">
+                                <span class="line-thickness-picker"><select id="subVolMavol2width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subVolMavol2width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subVolMavol2color" value="#e91e63">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subMacdConfig" style="display:none;">
+                            <div class="indicator-param-row"><label>Длина Fast</label><input type="number" id="subMacdFast" min="1" max="100" placeholder="12"></div>
+                            <div class="indicator-param-row"><label>Длина Slow</label><input type="number" id="subMacdSlow" min="1" max="100" placeholder="26"></div>
+                            <div class="indicator-param-row"><label>Длина Signal</label><input type="number" id="subMacdSignal" min="1" max="50" placeholder="9"></div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subMacdDeaEn">
+                                <span>DEA</span>
+                                <span class="line-thickness-picker"><select id="subMacdDeaWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subMacdDeaWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subMacdDeaColor" value="#e91e63">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subMacdDifEn">
+                                <span>DIF</span>
+                                <span class="line-thickness-picker"><select id="subMacdDifWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subMacdDifWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subMacdDifColor" value="#9c27b0">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subMacdHistEn">
+                                <span>MACD</span>
+                                <span class="line-thickness-picker"><select id="subMacdHistWidth" class="ma-line-width-select" title="Толщина"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subMacdHistWidth" title="Толщина"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subMacdHistColor" value="#607d8b">
+                            </div>
+                            <div class="indicator-param-row"><label class="sub-macd-hist-label">Long (Рост)</label><select id="subMacdLongGrowStyle"><option value="hollow" selected>Полая</option><option value="filled">Закрашенная</option></select><input type="color" id="subMacdLongGrowColor" value="#26a69a"></div>
+                            <div class="indicator-param-row"><label class="sub-macd-hist-label">Long (Падение)</label><select id="subMacdLongFallStyle"><option value="hollow">Полая</option><option value="filled" selected>Закрашенная</option></select><input type="color" id="subMacdLongFallColor" value="#26a69a"></div>
+                            <div class="indicator-param-row"><label class="sub-macd-hist-label">Short (Рост)</label><select id="subMacdShortGrowStyle"><option value="hollow" selected>Полая</option><option value="filled">Закрашенная</option></select><input type="color" id="subMacdShortGrowColor" value="#ef5350"></div>
+                            <div class="indicator-param-row"><label class="sub-macd-hist-label">Short (Падение)</label><select id="subMacdShortFallStyle"><option value="hollow">Полая</option><option value="filled" selected>Закрашенная</option></select><input type="color" id="subMacdShortFallColor" value="#ef5350"></div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subRsiConfig" style="display:none;">
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subRsiLine1en" checked>
+                                <span>RSI</span>
+                                <input type="number" id="subRsiLine1period" value="6" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subRsiLine1width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subRsiLine1width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subRsiLine1color" value="#e91e63">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subRsiLine2en" checked>
+                                <span>RSI</span>
+                                <input type="number" id="subRsiLine2period" value="12" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subRsiLine2width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subRsiLine2width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subRsiLine2color" value="#9c27b0">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subRsiLine3en" checked>
+                                <span>RSI</span>
+                                <input type="number" id="subRsiLine3period" value="24" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subRsiLine3width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subRsiLine3width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subRsiLine3color" value="#ffeb3b">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subMfiConfig" style="display:none;">
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subMfiLine1en" checked>
+                                <span>MFI</span>
+                                <input type="number" id="subMfiLine1period" value="7" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subMfiLine1width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subMfiLine1width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subMfiLine1color" value="#ff4081">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subMfiLine2en" checked>
+                                <span>MFI</span>
+                                <input type="number" id="subMfiLine2period" value="14" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subMfiLine2width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subMfiLine2width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subMfiLine2color" value="#9c27b0">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subMfiLine3en" checked>
+                                <span>MFI</span>
+                                <input type="number" id="subMfiLine3period" value="21" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subMfiLine3width" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subMfiLine3width" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subMfiLine3color" value="#ffc107">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subKdjConfig" style="display:none;">
+                            <div class="indicator-param-row"><label>Расчет периода</label><input type="number" id="subKdjCalcPeriod" value="9" min="2" max="100" class="sub-rsi-period-input"></div>
+                            <div class="indicator-param-row"><label>Период МА 1</label><input type="number" id="subKdjMa1" value="3" min="1" max="50" class="sub-rsi-period-input"></div>
+                            <div class="indicator-param-row"><label>Период МА 2</label><input type="number" id="subKdjMa2" value="3" min="1" max="50" class="sub-rsi-period-input"></div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subKdjKEn" checked>
+                                <span>K</span>
+                                <span class="line-thickness-picker"><select id="subKdjKWidth" class="ma-line-width-select" title="Толщина линии"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subKdjKWidth" title="Толщина линии"><span class="line-preview lt-1"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subKdjKColor" value="#e91e63">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subKdjDEn" checked>
+                                <span>D</span>
+                                <span class="line-thickness-picker"><select id="subKdjDWidth" class="ma-line-width-select" title="Толщина линии"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subKdjDWidth" title="Толщина линии"><span class="line-preview lt-1"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subKdjDColor" value="#9c27b0">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subKdjJEn" checked>
+                                <span>J</span>
+                                <span class="line-thickness-picker"><select id="subKdjJWidth" class="ma-line-width-select" title="Толщина линии"><option value="1" selected>1</option><option value="2">2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subKdjJWidth" title="Толщина линии"><span class="line-preview lt-1"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subKdjJColor" value="#ffeb3b">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subObvConfig" style="display:none;">
+                            <div class="ma-line-config">
+                                <span>OBV</span>
+                                <span class="line-thickness-picker"><select id="subObvWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subObvWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subObvColor" value="#ffeb3b">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subObvMaEn">
+                                <span>MA</span>
+                                <input type="number" id="subObvMaPeriod" value="7" min="1" max="500" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subObvMaWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subObvMaWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subObvMaColor" value="#e91e63">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subObvEmaEn">
+                                <span>EMA</span>
+                                <input type="number" id="subObvEmaPeriod" value="7" min="1" max="500" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subObvEmaWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subObvEmaWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subObvEmaColor" value="#9c27b0">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subCciConfig" style="display:none;">
+                            <div class="ma-line-config">
+                                <label>Длина</label>
+                                <input type="number" id="subCciLength" value="9" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subCciWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subCciWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subCciColor" value="#ffeb3b">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subStochRsiConfig" style="display:none;">
+                            <div class="indicator-param-row"><label>Длина RSI</label><input type="number" id="subStochRsiRsiLength" value="14" min="2" max="100" class="sub-rsi-period-input"></div>
+                            <div class="indicator-param-row"><label>Длина Stoch</label><input type="number" id="subStochRsiStochLength" value="14" min="2" max="100" class="sub-rsi-period-input"></div>
+                            <div class="indicator-param-row"><label>Smooth K</label><input type="number" id="subStochRsiSmoothK" value="3" min="1" max="50" class="sub-rsi-period-input"></div>
+                            <div class="indicator-param-row"><label>Smooth D</label><input type="number" id="subStochRsiSmoothD" value="3" min="1" max="50" class="sub-rsi-period-input"></div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subStochRsiKEn" checked>
+                                <span>K%</span>
+                                <span class="line-thickness-picker"><select id="subStochRsiKWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subStochRsiKWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subStochRsiKColor" value="#e91e63">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subStochRsiDEn" checked>
+                                <span>D%</span>
+                                <span class="line-thickness-picker"><select id="subStochRsiDWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subStochRsiDWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subStochRsiDColor" value="#9c27b0">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subWrConfig" style="display:none;">
+                            <div class="ma-line-config">
+                                <label>Длина</label>
+                                <input type="number" id="subWrLength" value="14" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subWrWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subWrWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subWrColor" value="#ffeb3b">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subDmiConfig" style="display:none;">
+                            <div class="indicator-param-row"><label>Длина</label><input type="number" id="subDmiLength" value="14" min="2" max="100" class="sub-rsi-period-input"></div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subDmiPlusEn" checked>
+                                <span>+DI</span>
+                                <span class="line-thickness-picker"><select id="subDmiPlusWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subDmiPlusWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subDmiColorPlus" value="#e91e63">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subDmiMinusEn" checked>
+                                <span>-DI</span>
+                                <span class="line-thickness-picker"><select id="subDmiMinusWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subDmiMinusWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subDmiColorMinus" value="#9c27b0">
+                            </div>
+                            <div class="ma-line-config">
+                                <input type="checkbox" id="subDmiAdxEn" checked>
+                                <span>ADX</span>
+                                <span class="line-thickness-picker"><select id="subDmiAdxWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subDmiAdxWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subDmiColorAdx" value="#ffeb3b">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subMtmConfig" style="display:none;">
+                            <div class="ma-line-config">
+                                <label>Длина</label>
+                                <input type="number" id="subMtmLength" value="14" min="1" max="100" class="sub-rsi-period-input">
+                                <select id="subMtmSource" title="Источник"><option value="close">Закрытие</option><option value="open">Открытие</option><option value="high">Макс.</option><option value="low">Мин.</option></select>
+                                <span class="line-thickness-picker"><select id="subMtmWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subMtmWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subMtmColor" value="#ffeb3b">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel sub-indicator-panel" id="subEmvConfig" style="display:none;">
+                            <div class="ma-line-config">
+                                <label>Длина</label>
+                                <input type="number" id="subEmvLength" value="14" min="2" max="100" class="sub-rsi-period-input">
+                                <span class="line-thickness-picker"><select id="subEmvWidth" class="ma-line-width-select" title="Толщина линии"><option value="1">1</option><option value="2" selected>2</option><option value="3">3</option><option value="4">4</option></select><span class="line-thickness-trigger" data-target="subEmvWidth" title="Толщина линии"><span class="line-preview lt-2"></span><span class="lt-arrow">▾</span></span><span class="line-thickness-dropdown"><span class="line-thickness-option" data-value="1"><span class="line-preview lt-1"></span></span><span class="line-thickness-option" data-value="2"><span class="line-preview lt-2"></span></span><span class="line-thickness-option" data-value="3"><span class="line-preview lt-3"></span></span><span class="line-thickness-option" data-value="4"><span class="line-preview lt-4"></span></span></span></span>
+                                <input type="color" id="subEmvColor" value="#ffeb3b">
+                            </div>
+                            <div class="indicator-param-row"><label>Делитель</label><input type="number" id="subEmvDivisor" value="10000" min="1" max="100000000" step="1" class="sub-emv-divisor-input"></div>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+                <div class="indicators-modal-footer">
+                    <button class="indicators-btn indicators-reset" id="indicatorsReset">Сброс</button>
+                    <button class="indicators-btn indicators-save" id="indicatorsSave">Сохранить</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Chart Area -->
+        <div class="chart-wrapper" id="chartWrapper">
+            <!-- Left Sidebar Tools -->
+            <div class="sidebar-tools">
+                <button class="tool-btn" title="Alert">🔔</button>
+                <button class="tool-btn" title="Brush">🖌</button>
+                <button class="tool-btn" title="Horizontal Line">─</button>
+                <button class="tool-btn" title="Rectangle">▭</button>
+                <button class="tool-btn" title="Ruler">📏</button>
+                <button class="tool-btn" title="Delete">🗑</button>
+                <button class="tool-btn drawing-toggle-btn" type="button" title="Скрыть/показать элементы рисования" id="drawingToggleBtn" aria-pressed="true">
+                    <span class="drawing-toggle-icon" aria-hidden="true">👁</span>
+                    <span class="drawing-toggle-text">Скрыть/показать элементы рисования</span>
+                </button>
+            </div>
+
+            <!-- Chart Canvas -->
+            <div class="chart-area">
+                <canvas id="chartCanvas"></canvas>
+            </div>
+        </div>
+
+        <!-- Fullscreen Button -->
+        <button class="fullscreen-btn" title="Fullscreen">⛶</button>
+    </div>
+
+    <script src="chart.js"></script>
+</body>
+</html>
+
