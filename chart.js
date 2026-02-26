@@ -372,10 +372,10 @@ class CandlestickChart {
                         time1: t1, price1: p1, time2: t2, price2: p2,
                         summary: summary
                     });
-                    
-                    // Reset for next selection (but keep mode active)
                     this.currentRulerSelection = null;
                     this.draw();
+                    this.setRulerMode(false);
+                    document.querySelector('.tool-btn[title="Ruler"]')?.classList.remove('active');
                 }
                 return;
             }
@@ -387,6 +387,8 @@ class CandlestickChart {
                     price: this.yToPrice(y)
                 });
                 this.draw();
+                this.setHorizontalLineMode(false);
+                document.querySelector('.tool-btn[title="Horizontal Line"]')?.classList.remove('active');
                 return;
             }
             
@@ -407,10 +409,11 @@ class CandlestickChart {
                         time2: this.xToTime(this.currentRectangle.x2),
                         price2: this.yToPrice(this.currentRectangle.y2)
                     });
-                    // Reset for next rectangle (but keep mode active)
                     this.currentRectangle = null;
                     this.tempPoint = null;
                     this.draw();
+                    this.setRectangleMode(false);
+                    document.querySelector('.tool-btn[title="Rectangle"]')?.classList.remove('active');
                 }
                 return;
             }
@@ -433,10 +436,11 @@ class CandlestickChart {
                     time2: this.xToTime(this.currentLine.x2),
                     price2: this.yToPrice(this.currentLine.y2)
                 });
-                // Reset for next line (but keep drawing mode active)
                 this.currentLine = null;
                 this.tempPoint = null;
                 this.draw();
+                this.setDrawingMode(false);
+                document.querySelector('.tool-btn[title="Brush"]')?.classList.remove('active');
             }
         });
         
@@ -1065,12 +1069,12 @@ class CandlestickChart {
     
     getDefaultVisibleCandles(interval) {
         const s = (interval || this.interval || '1d').toString().toLowerCase();
-        if (s === '1m' || s === '3m') return 35;
-        if (s === '5m') return 40;
-        if (s === '15m' || s === '30m') return 50;
-        if (s === '1h' || s === '2h') return 60;
-        if (s === '4h') return 70;
-        return 90;
+        if (s === '1m' || s === '3m') return 45;
+        if (s === '5m') return 55;
+        if (s === '15m' || s === '30m') return 70;
+        if (s === '1h' || s === '2h') return 85;
+        if (s === '4h') return 100;
+        return 120;
     }
     
     initializeFromData() {
@@ -1106,8 +1110,19 @@ class CandlestickChart {
         this.visibleStartTime = this.endTime - dataTimeRange;
         const ratio = this.chartEndPositionRatio;
         this.visibleEndTime = this.endTime + dataTimeRange * (1 / ratio - 1);
-        this.visibleMinPrice = this.minPrice;
-        this.visibleMaxPrice = this.maxPrice;
+        // Растягиваем по вертикали: видимый диапазон цен — по свечам в видимом интервале времени (с отступом)
+        const visibleCandles = this.candles.filter(c => c.time >= this.visibleStartTime && c.time <= this.endTime);
+        if (visibleCandles.length > 0) {
+            const vHigh = Math.max(...visibleCandles.map(c => c.high));
+            const vLow = Math.min(...visibleCandles.map(c => c.low));
+            const vRange = vHigh - vLow || this.priceRange * 0.1;
+            const pad = vRange * 0.1;
+            this.visibleMinPrice = vLow - pad;
+            this.visibleMaxPrice = vHigh + pad;
+        } else {
+            this.visibleMinPrice = this.minPrice;
+            this.visibleMaxPrice = this.maxPrice;
+        }
         
         this.updateTopBarMetrics();
         
