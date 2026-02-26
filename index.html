@@ -8,7 +8,7 @@
 </head>
 <body>
     <div class="chart-container">
-        <!-- Top Bar -->
+        <!-- Top Bar: logo, metrics, timeframes, menu in one row -->
         <div class="top-bar">
             <div class="asset-info" title="Источник данных — биржа">
                 <span class="asset-icon">P</span>
@@ -32,10 +32,6 @@
                     <span class="metric-value" id="metricVolumeValue">—</span>
                 </div>
             </div>
-        </div>
-
-        <!-- Timeframe and Chart Tools Bar -->
-        <div class="timeframe-bar">
             <div class="timeframe-buttons">
                 <button class="timeframe-btn" data-interval="3m">3M</button>
                 <button class="timeframe-btn" data-interval="5m">5M</button>
@@ -524,11 +520,13 @@
                 <button class="tool-btn" title="Horizontal Line">─</button>
                 <button class="tool-btn" title="Rectangle">▭</button>
                 <button class="tool-btn" title="Ruler">📏</button>
-                <button class="tool-btn" title="Delete">🗑</button>
-                <button class="tool-btn drawing-toggle-btn" type="button" title="Скрыть/показать элементы рисования" id="drawingToggleBtn" aria-pressed="true">
-                    <span class="drawing-toggle-icon" aria-hidden="true">👁</span>
-                    <span class="drawing-toggle-text">Скрыть/показать элементы рисования</span>
-                </button>
+                <div class="sidebar-tools-bottom-group">
+                    <button class="tool-btn drawing-toggle-btn" type="button" title="Скрыть/показать элементы рисования" id="drawingToggleBtn" aria-pressed="true">
+                        <span class="drawing-toggle-icon" aria-hidden="true">👁</span>
+                        <span class="drawing-toggle-text">Скрыть/показать элементы рисования</span>
+                    </button>
+                    <button class="tool-btn" title="Delete">🗑</button>
+                </div>
             </div>
 
             <!-- Chart Canvas -->

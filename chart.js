@@ -7,7 +7,10 @@ class CandlestickChart {
         }
         this.ctx = this.canvas.getContext('2d');
         
-        // Chart dimensions
+        // Chart dimensions (логические пиксели для координат; буфер канваса = logical * dpr для чёткости при масштабе)
+        this.dpr = 1;
+        this.logicalWidth = 0;
+        this.logicalHeight = 0;
         this.padding = { top: 20, right: 80, bottom: 80, left: 10 }; // Increased bottom for volume
         this.chartWidth = 0;
         this.chartHeight = 0;
@@ -50,6 +53,13 @@ class CandlestickChart {
         this.isPanning = false;
         this.panStartX = 0;
         this.panStartY = 0;
+        // Zoom by drag (right mouse): сдвиг по горизонтали — масштаб по времени, по вертикали — по цене
+        this.isZoomDragging = false;
+        this.zoomDragStartX = 0;
+        this.zoomDragStartY = 0;
+        this.zoomDragStartTimeRange = 0;
+        this.zoomDragStartPriceRange = 0;
+        this.zoomDragStartVisible = null;
         this.panStartVisibleStartTime = 0;
         this.panStartVisibleEndTime = 0;
         this.panStartVisibleMinPrice = 0;
@@ -94,6 +104,9 @@ class CandlestickChart {
         // Bind wheel event for zooming
         this.setupZoomEvents();
         
+        // Контекстное меню «Сбросить масштаб» по правому клику
+        this.setupResetZoomContextMenu();
+        
         // Сразу показываем биржу — источник данных (как на первом скриншоте)
         const exchangeEl = document.getElementById('exchangeName');
         if (exchangeEl) exchangeEl.textContent = this.exchangeName || '—';
@@ -113,94 +126,100 @@ class CandlestickChart {
             
             // Check if mouse is over chart area (excluding volume)
             const chartAreaHeight = this.chartHeight - this.volumeHeight;
-            if (mouseX < this.padding.left || mouseX > this.canvas.width - this.padding.right ||
+            if (mouseX < this.padding.left || mouseX > this.logicalWidth - this.padding.right ||
                 mouseY < this.padding.top || mouseY > this.padding.top + chartAreaHeight) {
                 return;
             }
             
-            // Determine zoom direction
-            const zoomFactor = e.deltaY > 0 ? 1.1 : 0.9; // Zoom out if scrolling down, zoom in if scrolling up
-            const newZoomLevel = Math.max(0.1, Math.min(10, this.zoomLevel * zoomFactor));
-            
-            if (newZoomLevel === this.zoomLevel) return;
-            
-            // Calculate what time and price the mouse is pointing at
-            const mouseTime = this.xToTime(mouseX);
-            const mousePrice = this.yToPrice(mouseY);
-            
-            // Calculate current visible ranges
+            // Колёсико: общий зум (по обеим осям). Масштаб по осям по отдельности — правой кнопкой мыши сдвигом (см. setupDrawingEvents).
+            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
             const currentTimeRange = this.visibleEndTime - this.visibleStartTime;
             const currentPriceRange = this.visibleMaxPrice - this.visibleMinPrice;
-            
-            // Calculate zoom ratio
-            const zoomRatio = newZoomLevel / this.zoomLevel;
-            
-            // Calculate new ranges - scale both axes proportionally
-            const newTimeRange = currentTimeRange / zoomRatio;
-            const newPriceRange = currentPriceRange / zoomRatio;
-            
-            // Calculate center point in data coordinates (where mouse is pointing)
-            const timeCenter = mouseTime;
-            const priceCenter = mousePrice;
-            
-            // Calculate normalized position (0-1) of mouse in current view
+            const mouseTime = this.xToTime(mouseX);
+            const mousePrice = this.yToPrice(mouseY);
             const normalizedX = (mouseX - this.padding.left) / this.chartWidth;
             const normalizedY = (this.padding.top + chartAreaHeight - mouseY) / chartAreaHeight;
-            
-            // Adjust visible time range keeping mouse point fixed
-            const timeOffset = currentTimeRange * normalizedX;
-            let newStartTime = timeCenter - timeOffset / zoomRatio;
+            const newTimeRange = Math.max(this.timeRange * 0.005, Math.min(this.timeRange, currentTimeRange / zoomFactor));
+            const newPriceRange = Math.max(this.priceRange * 0.005, Math.min(this.priceRange, currentPriceRange / zoomFactor));
+            let newStartTime = mouseTime - currentTimeRange * normalizedX * (newTimeRange / currentTimeRange);
             let newEndTime = newStartTime + newTimeRange;
-            
-            // Clamp to data bounds - ensure we don't go beyond data limits
-            if (newStartTime < this.startTime) {
-                newStartTime = this.startTime;
-                newEndTime = Math.min(this.endTime, newStartTime + newTimeRange);
-            }
-            if (newEndTime > this.endTime) {
-                newEndTime = this.endTime;
-                newStartTime = Math.max(this.startTime, newEndTime - newTimeRange);
-            }
-            
-            // Ensure minimum time range only when zooming in (not when zooming out)
-            if (zoomRatio > 1 && newEndTime - newStartTime < this.timeRange * 0.01) {
-                const center = (newStartTime + newEndTime) / 2;
-                newStartTime = Math.max(this.startTime, center - this.timeRange * 0.005);
-                newEndTime = Math.min(this.endTime, center + this.timeRange * 0.005);
-            }
-            
-            // Adjust visible price range keeping mouse point fixed
-            const priceOffset = currentPriceRange * normalizedY;
-            let newMinPrice = priceCenter - priceOffset / zoomRatio;
+            let newMinPrice = mousePrice - currentPriceRange * normalizedY * (newPriceRange / currentPriceRange);
             let newMaxPrice = newMinPrice + newPriceRange;
-            
-            // Clamp to data bounds - ensure we don't go beyond data limits
-            if (newMinPrice < this.minPrice) {
-                newMinPrice = this.minPrice;
-                newMaxPrice = Math.min(this.maxPrice, newMinPrice + newPriceRange);
-            }
-            if (newMaxPrice > this.maxPrice) {
-                newMaxPrice = this.maxPrice;
-                newMinPrice = Math.max(this.minPrice, newMaxPrice - newPriceRange);
-            }
-            
-            // Ensure minimum price range only when zooming in (not when zooming out)
-            if (zoomRatio > 1 && newMaxPrice - newMinPrice < this.priceRange * 0.01) {
-                const center = (newMinPrice + newMaxPrice) / 2;
-                newMinPrice = Math.max(this.minPrice, center - this.priceRange * 0.005);
-                newMaxPrice = Math.min(this.maxPrice, center + this.priceRange * 0.005);
-            }
-            
-            // Update zoom state
-            this.zoomLevel = newZoomLevel;
+            if (newStartTime < this.startTime) { newStartTime = this.startTime; newEndTime = Math.min(this.endTime, newStartTime + newTimeRange); }
+            if (newEndTime > this.endTime) { newEndTime = this.endTime; newStartTime = Math.max(this.startTime, newEndTime - newTimeRange); }
+            if (newMinPrice < this.minPrice) { newMinPrice = this.minPrice; newMaxPrice = Math.min(this.maxPrice, newMinPrice + newPriceRange); }
+            if (newMaxPrice > this.maxPrice) { newMaxPrice = this.maxPrice; newMinPrice = Math.max(this.minPrice, newMaxPrice - newPriceRange); }
+            this.zoomLevel *= zoomFactor;
             this.visibleStartTime = newStartTime;
             this.visibleEndTime = newEndTime;
             this.visibleMinPrice = newMinPrice;
             this.visibleMaxPrice = newMaxPrice;
-            
-            // Redraw chart
             this.draw();
         });
+    }
+    
+    setupResetZoomContextMenu() {
+        const chartInstance = this;
+        const wrap = document.getElementById('chartWrapper') || this.canvas.closest('.chart-wrapper');
+        const container = wrap || document.body;
+        const menu = document.createElement('div');
+        menu.className = 'chart-reset-zoom-menu';
+        menu.setAttribute('role', 'menu');
+        menu.innerHTML = '<button type="button" class="chart-reset-zoom-btn">Сбросить масштаб</button>';
+        menu.style.display = 'none';
+        container.appendChild(menu);
+        this.resetZoomMenuEl = menu;
+        const btn = menu.querySelector('.chart-reset-zoom-btn');
+        btn.addEventListener('click', () => {
+            chartInstance.resetZoomToDefault();
+            chartInstance.hideResetZoomMenu();
+        });
+        const closeIfOutside = (e) => {
+            if (menu.style.display !== 'none' && !menu.contains(e.target)) {
+                chartInstance.hideResetZoomMenu();
+                document.removeEventListener('mousedown', closeIfOutside);
+            }
+        };
+        this._resetZoomCloseOutside = closeIfOutside;
+    }
+    
+    showResetZoomMenu(clientX, clientY) {
+        if (!this.resetZoomMenuEl) return;
+        const menu = this.resetZoomMenuEl;
+        const padding = 8;
+        menu.style.left = clientX + padding + 'px';
+        menu.style.top = clientY + padding + 'px';
+        menu.style.display = 'block';
+        // Подправить позицию, чтобы меню всегда было в пределах окна
+        requestAnimationFrame(() => {
+            const rect = menu.getBoundingClientRect();
+            const vw = window.innerWidth;
+            const vh = window.innerHeight;
+            let left = rect.left;
+            let top = rect.top;
+            if (left + rect.width > vw - padding) left = clientX - rect.width - padding;
+            if (top + rect.height > vh - padding) top = clientY - rect.height - padding;
+            if (left < padding) left = padding;
+            if (top < padding) top = padding;
+            menu.style.left = left + 'px';
+            menu.style.top = top + 'px';
+        });
+        setTimeout(() => document.addEventListener('mousedown', this._resetZoomCloseOutside), 0);
+    }
+    
+    hideResetZoomMenu() {
+        if (!this.resetZoomMenuEl) return;
+        this.resetZoomMenuEl.style.display = 'none';
+        document.removeEventListener('mousedown', this._resetZoomCloseOutside);
+    }
+    
+    resetZoomToDefault() {
+        this.visibleStartTime = this.startTime;
+        this.visibleEndTime = this.endTime;
+        this.visibleMinPrice = this.minPrice;
+        this.visibleMaxPrice = this.maxPrice;
+        this.zoomLevel = 1.0;
+        this.draw();
     }
     
     setupDrawingEvents() {
@@ -210,50 +229,75 @@ class CandlestickChart {
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
             
-            // Handle panning (when no drawing tools are active)
+            // Масштабирование сдвигом правой кнопкой: горизонталь — по времени, вертикаль — по цене (точка под курсором остаётся на месте).
+            if (this.isZoomDragging && this.zoomDragStartVisible) {
+                const deltaX = x - this.zoomDragStartX;
+                const deltaY = y - this.zoomDragStartY;
+                const chartAreaHeight = this.chartHeight - this.volumeHeight;
+                const normX = (this.zoomDragStartX - this.padding.left) / this.chartWidth;
+                const normY = 1 - (this.zoomDragStartY - this.padding.top) / chartAreaHeight;
+                const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
+                const pivotPrice = this.zoomDragStartVisible.minPrice + normY * (this.zoomDragStartVisible.maxPrice - this.zoomDragStartVisible.minPrice);
+                const timeMult = Math.max(0.05, Math.min(3, 1 - deltaX / 400));
+                const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
+                let newTimeRange = this.zoomDragStartTimeRange * timeMult;
+                let newPriceRange = this.zoomDragStartPriceRange * priceMult;
+                newTimeRange = Math.max(this.timeRange * 0.005, Math.min(this.timeRange, newTimeRange));
+                newPriceRange = Math.max(this.priceRange * 0.005, Math.min(this.priceRange, newPriceRange));
+                let newStartTime = pivotTime - newTimeRange * normX;
+                let newEndTime = newStartTime + newTimeRange;
+                let newMinPrice = pivotPrice - newPriceRange * normY;
+                let newMaxPrice = newMinPrice + newPriceRange;
+                const oneViewW = this.timeRange * 0.5;
+                const oneViewH = this.priceRange * 0.5;
+                if (newStartTime < this.startTime - oneViewW) { newStartTime = this.startTime - oneViewW; newEndTime = newStartTime + newTimeRange; }
+                if (newEndTime > this.endTime + oneViewW) { newEndTime = this.endTime + oneViewW; newStartTime = newEndTime - newTimeRange; }
+                if (newMinPrice < this.minPrice - oneViewH) { newMinPrice = this.minPrice - oneViewH; newMaxPrice = newMinPrice + newPriceRange; }
+                if (newMaxPrice > this.maxPrice + oneViewH) { newMaxPrice = this.maxPrice + oneViewH; newMinPrice = newMaxPrice - newPriceRange; }
+                this.visibleStartTime = newStartTime;
+                this.visibleEndTime = newEndTime;
+                this.visibleMinPrice = newMinPrice;
+                this.visibleMaxPrice = newMaxPrice;
+                this.draw();
+                return;
+            }
+            // Handle panning (when no drawing tools are active). Shift — только по времени, Alt — только по цене, иначе — по обеим осям.
             if (this.isPanning && !this.drawingMode && !this.horizontalLineMode && 
                 !this.rectangleMode && !this.rulerMode) {
                 const deltaX = x - this.panStartX;
                 const deltaY = y - this.panStartY;
-                
-                // Calculate time and price ranges
                 const timeRange = this.panStartVisibleEndTime - this.panStartVisibleStartTime;
                 const priceRange = this.panStartVisibleMaxPrice - this.panStartVisibleMinPrice;
-                
-                // Convert pixel delta to data delta
                 const timeDelta = -(deltaX / this.chartWidth) * timeRange;
                 const priceDelta = (deltaY / (this.chartHeight - this.volumeHeight)) * priceRange;
                 
-                // Calculate new visible ranges
-                let newStartTime = this.panStartVisibleStartTime + timeDelta;
-                let newEndTime = this.panStartVisibleEndTime + timeDelta;
-                let newMinPrice = this.panStartVisibleMinPrice + priceDelta;
-                let newMaxPrice = this.panStartVisibleMaxPrice + priceDelta;
+                const panTime = !e.altKey;
+                const panPrice = !e.shiftKey;
                 
-                // Clamp to data bounds
-                if (newStartTime < this.startTime) {
-                    const offset = this.startTime - newStartTime;
-                    newStartTime = this.startTime;
-                    newEndTime += offset;
-                }
-                if (newEndTime > this.endTime) {
-                    const offset = newEndTime - this.endTime;
-                    newEndTime = this.endTime;
-                    newStartTime -= offset;
-                }
+                let newStartTime = panTime ? this.panStartVisibleStartTime + timeDelta : this.panStartVisibleStartTime;
+                let newEndTime = panTime ? this.panStartVisibleEndTime + timeDelta : this.panStartVisibleEndTime;
+                let newMinPrice = panPrice ? this.panStartVisibleMinPrice + priceDelta : this.panStartVisibleMinPrice;
+                let newMaxPrice = panPrice ? this.panStartVisibleMaxPrice + priceDelta : this.panStartVisibleMaxPrice;
                 
-                if (newMinPrice < this.minPrice) {
-                    const offset = this.minPrice - newMinPrice;
-                    newMinPrice = this.minPrice;
-                    newMaxPrice += offset;
+                const maxTimeOver = timeRange;
+                const maxPriceOver = priceRange;
+                if (newStartTime < this.startTime - maxTimeOver) {
+                    newStartTime = this.startTime - maxTimeOver;
+                    newEndTime = newStartTime + timeRange;
                 }
-                if (newMaxPrice > this.maxPrice) {
-                    const offset = newMaxPrice - this.maxPrice;
-                    newMaxPrice = this.maxPrice;
-                    newMinPrice -= offset;
+                if (newEndTime > this.endTime + maxTimeOver) {
+                    newEndTime = this.endTime + maxTimeOver;
+                    newStartTime = newEndTime - timeRange;
+                }
+                if (newMinPrice < this.minPrice - maxPriceOver) {
+                    newMinPrice = this.minPrice - maxPriceOver;
+                    newMaxPrice = newMinPrice + priceRange;
+                }
+                if (newMaxPrice > this.maxPrice + maxPriceOver) {
+                    newMaxPrice = this.maxPrice + maxPriceOver;
+                    newMinPrice = newMaxPrice - priceRange;
                 }
                 
-                // Update visible ranges
                 this.visibleStartTime = newStartTime;
                 this.visibleEndTime = newEndTime;
                 this.visibleMinPrice = newMinPrice;
@@ -267,7 +311,7 @@ class CandlestickChart {
             if (this.rulerMode && this.currentRulerSelection) {
                 // Constrain to chart area
                 const chartAreaHeight = this.chartHeight - this.volumeHeight;
-                const maxX = this.canvas.width - this.padding.right;
+                const maxX = this.logicalWidth - this.padding.right;
                 const maxY = this.padding.top + chartAreaHeight;
                 
                 this.currentRulerSelection.x2 = Math.max(this.padding.left, Math.min(maxX, x));
@@ -299,7 +343,7 @@ class CandlestickChart {
             
             // Check if click is within chart area (excluding volume)
             const chartAreaHeight = this.chartHeight - this.volumeHeight;
-            if (x < this.padding.left || x > this.canvas.width - this.padding.right ||
+            if (x < this.padding.left || x > this.logicalWidth - this.padding.right ||
                 y < this.padding.top || y > this.padding.top + chartAreaHeight) {
                 return;
             }
@@ -313,7 +357,7 @@ class CandlestickChart {
                 } else {
                     // Second click - complete the selection
                     // Constrain to chart area
-                    const maxX = this.canvas.width - this.padding.right;
+                    const maxX = this.logicalWidth - this.padding.right;
                     const maxY = this.padding.top + chartAreaHeight;
                     
                     this.currentRulerSelection.x2 = Math.max(this.padding.left, Math.min(maxX, x));
@@ -340,7 +384,7 @@ class CandlestickChart {
             
             // Handle horizontal line mode
             if (this.horizontalLineMode) {
-                const rightEdge = this.canvas.width - this.padding.right;
+                const rightEdge = this.logicalWidth - this.padding.right;
                 this.horizontalLines.push({
                     x1: x,
                     y1: y,
@@ -401,19 +445,44 @@ class CandlestickChart {
             }
         });
         
-        // Mouse down handler for panning
+        // Mouse down: в области осей (слева/снизу) — масштабирование по осям; в области графика — панорамирование
         this.canvas.addEventListener('mousedown', (e) => {
-            // Only enable panning if no drawing tools are active
             if (!this.drawingMode && !this.horizontalLineMode && 
                 !this.rectangleMode && !this.rulerMode) {
                 const rect = this.canvas.getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
-                
-                // Check if mouse is within chart area (excluding volume)
+                if (x < 0 || x > this.logicalWidth || y < 0 || y > this.logicalHeight) return;
                 const chartAreaHeight = this.chartHeight - this.volumeHeight;
-                if (x >= this.padding.left && x <= this.canvas.width - this.padding.right &&
-                    y >= this.padding.top && y <= this.padding.top + chartAreaHeight) {
+                // Ось цены — справа (где подписи цен), ось времени — снизу (объём + подписи времени)
+                const inPriceAxis = this.logicalWidth > 0 && x >= this.logicalWidth - this.padding.right;
+                const inTimeAxis = this.chartHeight > 0 && y >= this.padding.top + chartAreaHeight;
+                const inAxisArea = inPriceAxis || inTimeAxis;
+                if (e.button === 0) {
+                    if (inAxisArea) {
+                        this.isZoomDragging = true;
+                        this.zoomDragStartX = x;
+                        this.zoomDragStartY = y;
+                        this.zoomDragStartTimeRange = this.visibleEndTime - this.visibleStartTime;
+                        this.zoomDragStartPriceRange = this.visibleMaxPrice - this.visibleMinPrice;
+                        this.zoomDragStartVisible = {
+                            startTime: this.visibleStartTime,
+                            endTime: this.visibleEndTime,
+                            minPrice: this.visibleMinPrice,
+                            maxPrice: this.visibleMaxPrice
+                        };
+                        this.canvas.style.cursor = 'grabbing';
+                    } else {
+                        this.isPanning = true;
+                        this.panStartX = x;
+                        this.panStartY = y;
+                        this.panStartVisibleStartTime = this.visibleStartTime;
+                        this.panStartVisibleEndTime = this.visibleEndTime;
+                        this.panStartVisibleMinPrice = this.visibleMinPrice;
+                        this.panStartVisibleMaxPrice = this.visibleMaxPrice;
+                        this.canvas.style.cursor = 'grabbing';
+                    }
+                } else if (e.button === 2) {
                     this.isPanning = true;
                     this.panStartX = x;
                     this.panStartY = y;
@@ -426,20 +495,44 @@ class CandlestickChart {
             }
         });
         
-        // Mouse up handler to stop panning
+        // Mouse up: отпускание кнопки завершает панорамирование и масштабирование
         this.canvas.addEventListener('mouseup', (e) => {
-            if (this.isPanning) {
+            if (e.button === 0) {
+                this.isZoomDragging = false;
+                this.isPanning = false;
+                this.canvas.style.cursor = 'default';
+            }
+            if (e.button === 2 && this.isPanning) {
                 this.isPanning = false;
                 this.canvas.style.cursor = 'default';
             }
         });
         
-        // Mouse leave handler to stop panning if mouse leaves canvas
+        // Mouse leave handler to stop panning / zoom-by-drag if mouse leaves canvas
         this.canvas.addEventListener('mouseleave', (e) => {
             if (this.isPanning) {
                 this.isPanning = false;
                 this.canvas.style.cursor = 'default';
             }
+            if (this.isZoomDragging) {
+                this.isZoomDragging = false;
+                this.canvas.style.cursor = 'default';
+            }
+        });
+        
+        // Правая кнопка мыши: в режиме Ruler/Rectangle — отменить рисование; иначе показать кнопку «Сбросить масштаб»
+        this.canvas.addEventListener('contextmenu', (e) => {
+            e.preventDefault();
+            if (this.rulerMode && this.currentRulerSelection) {
+                this.currentRulerSelection = null;
+                this.draw();
+            }
+            if (this.rectangleMode && this.currentRectangle) {
+                this.currentRectangle = null;
+                this.tempPoint = null;
+                this.draw();
+            }
+            this.showResetZoomMenu(e.clientX, e.clientY);
         });
         
         // Change cursor when in drawing mode or panning
@@ -447,15 +540,15 @@ class CandlestickChart {
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
-            const chartAreaHeight = this.chartHeight - this.volumeHeight;
-            const isInChartArea = x >= this.padding.left && x <= this.canvas.width - this.padding.right &&
-                                  y >= this.padding.top && y <= this.padding.top + chartAreaHeight;
+            const isOnCanvas = x >= 0 && x <= this.logicalWidth && y >= 0 && y <= this.logicalHeight;
             
             if (this.drawingMode || this.horizontalLineMode || this.rectangleMode || this.rulerMode) {
                 this.canvas.style.cursor = 'crosshair';
+            } else if (this.isZoomDragging) {
+                this.canvas.style.cursor = 'grabbing';
             } else if (this.isPanning) {
                 this.canvas.style.cursor = 'grabbing';
-            } else if (isInChartArea) {
+            } else if (isOnCanvas) {
                 this.canvas.style.cursor = 'grab';
             } else {
                 this.canvas.style.cursor = 'default';
@@ -627,9 +720,14 @@ class CandlestickChart {
         const width = Math.max(1, rect.width);
         const height = Math.max(1, rect.height);
         
-        // Set canvas size
-        this.canvas.width = width;
-        this.canvas.height = height;
+        this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+        this.logicalWidth = width;
+        this.logicalHeight = height;
+        this.canvas.width = width * this.dpr;
+        this.canvas.height = height * this.dpr;
+        this.canvas.style.width = width + 'px';
+        this.canvas.style.height = height + 'px';
+        this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
         
         const oldChartWidth = this.chartWidth;
         this.chartWidth = width - this.padding.left - this.padding.right;
@@ -637,7 +735,7 @@ class CandlestickChart {
         
         // Update horizontal lines to extend to new right edge
         if (oldChartWidth > 0 && this.chartWidth !== oldChartWidth) {
-            const rightEdge = this.canvas.width - this.padding.right;
+            const rightEdge = this.logicalWidth - this.padding.right;
             this.horizontalLines.forEach(line => {
                 // Keep the same Y coordinate, update X2 to new right edge
                 line.x2 = rightEdge;
@@ -1124,7 +1222,7 @@ class CandlestickChart {
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
         const minX = this.padding.left;
         const minY = this.padding.top;
-        const maxX = this.canvas.width - this.padding.right;
+        const maxX = this.logicalWidth - this.padding.right;
         const maxY = this.padding.top + chartAreaHeight;
         
         // Horizontal grid lines (price levels) - based on visible range
@@ -1169,7 +1267,7 @@ class CandlestickChart {
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
         const minX = this.padding.left;
         const minY = this.padding.top;
-        const maxX = this.canvas.width - this.padding.right;
+        const maxX = this.logicalWidth - this.padding.right;
         const maxY = this.padding.top + chartAreaHeight;
         
         this.priceLevels.forEach(level => {
@@ -1198,13 +1296,13 @@ class CandlestickChart {
                 this.ctx.fillStyle = '#fff';
                 this.ctx.font = '11px sans-serif';
                 const textWidth = this.ctx.measureText(level.label).width;
-                this.ctx.fillRect(this.canvas.width - this.padding.right + 5, y - 9, textWidth + 6, 18);
+                this.ctx.fillRect(this.logicalWidth - this.padding.right + 5, y - 9, textWidth + 6, 18);
                 this.ctx.fillStyle = '#000';
-                this.ctx.fillText(level.label, this.canvas.width - this.padding.right + 8, y + 4);
+                this.ctx.fillText(level.label, this.logicalWidth - this.padding.right + 8, y + 4);
             } else {
                 this.ctx.fillStyle = '#999';
                 this.ctx.font = '11px sans-serif';
-                this.ctx.fillText(level.label, this.canvas.width - this.padding.right + 5, y + 4);
+                this.ctx.fillText(level.label, this.logicalWidth - this.padding.right + 5, y + 4);
             }
         });
         
@@ -1232,7 +1330,7 @@ class CandlestickChart {
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
         const minX = this.padding.left;
         const minY = this.padding.top;
-        const maxX = this.canvas.width - this.padding.right;
+        const maxX = this.logicalWidth - this.padding.right;
         const maxY = this.padding.top + chartAreaHeight;
         
         visibleCandles.forEach((candle, index) => {
@@ -1322,7 +1420,7 @@ class CandlestickChart {
         // Chart area bounds for clipping
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
         const minX = this.padding.left;
-        const maxX = this.canvas.width - this.padding.right;
+        const maxX = this.logicalWidth - this.padding.right;
         const volumeY = this.padding.top + chartAreaHeight;
         const volumeMaxY = volumeY + this.volumeHeight;
         
@@ -1397,7 +1495,7 @@ class CandlestickChart {
             const price = this.visibleMinPrice + i * priceStep;
             const y = this.priceToY(price);
             const label = this.formatPrice(price);
-            this.ctx.fillText(label, this.canvas.width - this.padding.right + 5, y + 4);
+            this.ctx.fillText(label, this.logicalWidth - this.padding.right + 5, y + 4);
         }
     }
     
@@ -1416,7 +1514,7 @@ class CandlestickChart {
             const x = this.timeToX(time);
             const label = this.formatTime(time);
             
-            this.ctx.fillText(label, x, this.canvas.height - this.padding.bottom + 20);
+            this.ctx.fillText(label, x, this.logicalHeight - this.padding.bottom + 20);
         }
     }
     
@@ -1430,7 +1528,7 @@ class CandlestickChart {
         // Position watermark in center of chart area (not including volume)
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
         const chartCenterY = this.padding.top + chartAreaHeight / 2;
-        this.ctx.fillText('PTB', this.canvas.width / 2, chartCenterY);
+        this.ctx.fillText('PTB', this.logicalWidth / 2, chartCenterY);
         this.ctx.restore();
     }
     
@@ -1448,7 +1546,7 @@ class CandlestickChart {
         // Use exact pixel boundaries - no rounding errors
         const minX = Math.ceil(this.padding.left);
         const minY = Math.ceil(this.padding.top);
-        const maxX = Math.floor(this.canvas.width - this.padding.right);
+        const maxX = Math.floor(this.logicalWidth - this.padding.right);
         const maxY = Math.floor(this.padding.top + chartAreaHeight);
         
         // Set strict clipping region to chart area (excluding volume and axes)
@@ -1556,7 +1654,7 @@ class CandlestickChart {
         const boxY = y + padding;
         
         // Make sure box fits
-        if (boxX + boxWidth <= this.canvas.width && boxY + boxHeight <= this.canvas.height) {
+        if (boxX + boxWidth <= this.logicalWidth && boxY + boxHeight <= this.logicalHeight) {
             // Draw green background box
             this.ctx.fillStyle = 'rgba(76, 175, 80, 0.9)'; // Green background
             this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
@@ -1691,7 +1789,7 @@ class CandlestickChart {
         // Use exact pixel boundaries - no rounding errors
         const minX = Math.ceil(this.padding.left);
         const minY = Math.ceil(this.padding.top);
-        const maxX = Math.floor(this.canvas.width - this.padding.right);
+        const maxX = Math.floor(this.logicalWidth - this.padding.right);
         const maxY = Math.floor(this.padding.top + chartAreaHeight);
         
         // Set strict clipping region to chart area (excluding volume and axes)
@@ -2346,7 +2444,7 @@ class CandlestickChart {
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
         const minX = this.padding.left;
         const minY = this.padding.top;
-        const maxX = this.canvas.width - this.padding.right;
+        const maxX = this.logicalWidth - this.padding.right;
         const maxY = this.padding.top + chartAreaHeight;
         
         const drawIndicatorLine = (values) => {
@@ -2580,14 +2678,14 @@ class CandlestickChart {
     }
     
     draw() {
-        if (!this.ctx || this.canvas.width === 0 || this.canvas.height === 0) {
+        if (!this.ctx || this.logicalWidth === 0 || this.logicalHeight === 0) {
             console.warn('Canvas not ready for drawing');
             return;
         }
         
         // Clear canvas
         this.ctx.fillStyle = '#2a2a2a';
-        this.ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.fillRect(0, 0, this.logicalWidth, this.logicalHeight);
         
         // Only draw if we have valid dimensions
         if (this.chartWidth <= 0 || this.chartHeight <= 0) {
@@ -2615,8 +2713,8 @@ class CandlestickChart {
                 candles: this.candles?.length,
                 chartWidth: this.chartWidth,
                 chartHeight: this.chartHeight,
-                canvasWidth: this.canvas.width,
-                canvasHeight: this.canvas.height
+                canvasWidth: this.logicalWidth,
+                canvasHeight: this.logicalHeight
             });
         }
     }
