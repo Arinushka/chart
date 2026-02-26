@@ -76,6 +76,7 @@ class CandlestickChart {
         this.visibleEndTime = 0;
         this.visibleMinPrice = 0;
         this.visibleMaxPrice = 0;
+        this.axisZoomUsed = false; // true, если пользователь масштабировал по осям (для показа кнопки «Сбросить масштаб»)
         
         // Indicators (MA, EMA, etc.) - main chart overlay
         this.activeIndicators = {
@@ -219,6 +220,7 @@ class CandlestickChart {
         this.visibleMinPrice = this.minPrice;
         this.visibleMaxPrice = this.maxPrice;
         this.zoomLevel = 1.0;
+        this.axisZoomUsed = false;
         this.draw();
     }
     
@@ -258,6 +260,7 @@ class CandlestickChart {
                 this.visibleEndTime = newEndTime;
                 this.visibleMinPrice = newMinPrice;
                 this.visibleMaxPrice = newMaxPrice;
+                this.axisZoomUsed = true;
                 this.draw();
                 return;
             }
@@ -532,7 +535,7 @@ class CandlestickChart {
                 this.tempPoint = null;
                 this.draw();
             }
-            this.showResetZoomMenu(e.clientX, e.clientY);
+            if (this.axisZoomUsed) this.showResetZoomMenu(e.clientX, e.clientY);
         });
         
         // Change cursor when in drawing mode or panning
