@@ -228,15 +228,14 @@ class CandlestickChart {
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
             
-            // Масштабирование сдвигом правой кнопкой: горизонталь — по времени, вертикаль — по цене (точка под курсором остаётся на месте).
+            // Масштабирование сдвигом: по времени — точка под курсором; по цене — центр видимого диапазона.
             if (this.isZoomDragging && this.zoomDragStartVisible) {
                 const deltaX = x - this.zoomDragStartX;
                 const deltaY = y - this.zoomDragStartY;
                 const chartAreaHeight = this.chartHeight - this.volumeHeight;
                 const normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
-                const normY = 1 - (this.zoomDragStartY - this.padding.top) / chartAreaHeight;
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
-                const pivotPrice = this.zoomDragStartVisible.minPrice + normY * (this.zoomDragStartVisible.maxPrice - this.zoomDragStartVisible.minPrice);
+                const pivotPrice = (this.zoomDragStartVisible.minPrice + this.zoomDragStartVisible.maxPrice) / 2;
                 const timeMult = Math.max(0.05, Math.min(3, 1 - deltaX / 400));
                 const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
                 let newTimeRange = this.zoomDragStartTimeRange * timeMult;
@@ -245,14 +244,11 @@ class CandlestickChart {
                 newPriceRange = Math.max(this.priceRange * 0.005, newPriceRange);
                 let newStartTime = pivotTime - newTimeRange * normX;
                 let newEndTime = newStartTime + newTimeRange;
-                let newMinPrice = pivotPrice - newPriceRange * normY;
-                let newMaxPrice = newMinPrice + newPriceRange;
+                let newMinPrice = pivotPrice - newPriceRange / 2;
+                let newMaxPrice = pivotPrice + newPriceRange / 2;
                 const oneViewW = this.timeRange * 0.5;
-                const oneViewH = this.priceRange * 0.5;
                 if (newStartTime < this.startTime - oneViewW) { newStartTime = this.startTime - oneViewW; newEndTime = newStartTime + newTimeRange; }
                 if (newEndTime > this.endTime + oneViewW) { newEndTime = this.endTime + oneViewW; newStartTime = newEndTime - newTimeRange; }
-                if (newMinPrice < this.minPrice - oneViewH) { newMinPrice = this.minPrice - oneViewH; newMaxPrice = newMinPrice + newPriceRange; }
-                if (newMaxPrice > this.maxPrice + oneViewH) { newMaxPrice = this.maxPrice + oneViewH; newMinPrice = newMaxPrice - newPriceRange; }
                 this.visibleStartTime = newStartTime;
                 this.visibleEndTime = newEndTime;
                 this.visibleMinPrice = newMinPrice;
@@ -363,15 +359,17 @@ class CandlestickChart {
                     this.currentRulerSelection.x2 = Math.max(this.padding.left, Math.min(maxX, x));
                     this.currentRulerSelection.y2 = Math.max(this.padding.top, Math.min(maxY, y));
                     
-                    // Calculate data summary for the selection
-                    const summary = this.calculateRulerSummary(this.currentRulerSelection);
-                    
-                    // Save selection with summary
+                    const t1 = this.xToTime(this.currentRulerSelection.x1);
+                    const p1 = this.yToPrice(this.currentRulerSelection.y1);
+                    const t2 = this.xToTime(this.currentRulerSelection.x2);
+                    const p2 = this.yToPrice(this.currentRulerSelection.y2);
+                    const startTime = Math.min(t1, t2);
+                    const endTime = Math.max(t1, t2);
+                    const minPrice = Math.min(p1, p2);
+                    const maxPrice = Math.max(p1, p2);
+                    const summary = this.calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice);
                     this.rulerSelections.push({
-                        x1: this.currentRulerSelection.x1,
-                        y1: this.currentRulerSelection.y1,
-                        x2: this.currentRulerSelection.x2,
-                        y2: this.currentRulerSelection.y2,
+                        time1: t1, price1: p1, time2: t2, price2: p2,
                         summary: summary
                     });
                     
@@ -382,14 +380,11 @@ class CandlestickChart {
                 return;
             }
             
-            // Handle horizontal line mode
+            // Handle horizontal line mode (сохраняем в координатах графика: время, цена)
             if (this.horizontalLineMode) {
-                const rightEdge = this.logicalWidth - this.padding.right;
                 this.horizontalLines.push({
-                    x1: x,
-                    y1: y,
-                    x2: rightEdge,
-                    y2: y
+                    time1: this.xToTime(x),
+                    price: this.yToPrice(y)
                 });
                 this.draw();
                 return;
@@ -407,10 +402,10 @@ class CandlestickChart {
                     this.currentRectangle.x2 = x;
                     this.currentRectangle.y2 = y;
                     this.rectangles.push({
-                        x1: this.currentRectangle.x1,
-                        y1: this.currentRectangle.y1,
-                        x2: this.currentRectangle.x2,
-                        y2: this.currentRectangle.y2
+                        time1: this.xToTime(this.currentRectangle.x1),
+                        price1: this.yToPrice(this.currentRectangle.y1),
+                        time2: this.xToTime(this.currentRectangle.x2),
+                        price2: this.yToPrice(this.currentRectangle.y2)
                     });
                     // Reset for next rectangle (but keep mode active)
                     this.currentRectangle = null;
@@ -429,14 +424,14 @@ class CandlestickChart {
                 this.tempPoint = { x, y };
                 this.draw();
             } else {
-                // Second point - complete the line
+                // Second point - complete the line (сохраняем в координатах графика: время, цена)
                 this.currentLine.x2 = x;
                 this.currentLine.y2 = y;
                 this.drawnLines.push({
-                    x1: this.currentLine.x1,
-                    y1: this.currentLine.y1,
-                    x2: this.currentLine.x2,
-                    y2: this.currentLine.y2
+                    time1: this.xToTime(this.currentLine.x1),
+                    price1: this.yToPrice(this.currentLine.y1),
+                    time2: this.xToTime(this.currentLine.x2),
+                    price2: this.yToPrice(this.currentLine.y2)
                 });
                 // Reset for next line (but keep drawing mode active)
                 this.currentLine = null;
@@ -520,9 +515,14 @@ class CandlestickChart {
             }
         });
         
-        // Правая кнопка мыши: в режиме Ruler/Rectangle — отменить рисование; иначе показать кнопку «Сбросить масштаб»
+        // Правая кнопка мыши: в режиме Brush/Ruler/Rectangle — отменить текущее рисование; иначе показать кнопку «Сбросить масштаб»
         this.canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
+            if (this.drawingMode && this.currentLine) {
+                this.currentLine = null;
+                this.tempPoint = null;
+                this.draw();
+            }
             if (this.rulerMode && this.currentRulerSelection) {
                 this.currentRulerSelection = null;
                 this.draw();
@@ -618,6 +618,28 @@ class CandlestickChart {
         this.canvas.style.cursor = enabled ? 'crosshair' : 'default';
     }
     
+    calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice) {
+        const selectedCandles = this.candles.filter(candle => {
+            if (candle.time < startTime || candle.time > endTime) return false;
+            return !(candle.low > maxPrice || candle.high < minPrice);
+        });
+        if (selectedCandles.length === 0) {
+            return { count: 0, percentChange: '0%', timePeriod: '0н 0ч', bars: 0 };
+        }
+        const sortedCandles = [...selectedCandles].sort((a, b) => a.time - b.time);
+        const firstCandle = sortedCandles[0];
+        const lastCandle = sortedCandles[sortedCandles.length - 1];
+        const firstPrice = firstCandle.open;
+        const lastPrice = lastCandle.close;
+        const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
+        const percentChangeStr = (percentChange >= 0 ? '+' : '') + percentChange.toFixed(2) + '%';
+        const timeDiff = endTime - startTime;
+        const weeks = Math.floor(timeDiff / (7 * 24 * 60 * 60 * 1000));
+        const hours = Math.floor((timeDiff % (7 * 24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
+        const timePeriodStr = `${weeks}н ${hours}ч`;
+        return { count: selectedCandles.length, percentChange: percentChangeStr, timePeriod: timePeriodStr, bars: selectedCandles.length };
+    }
+    
     calculateRulerSummary(selection) {
         // Convert screen coordinates to price and time ranges
         const x1 = Math.min(selection.x1, selection.x2);
@@ -637,51 +659,7 @@ class CandlestickChart {
         const startTime = Math.min(time1, time2);
         const endTime = Math.max(time1, time2);
         
-        // Find candles within the selection
-        const selectedCandles = this.candles.filter(candle => {
-            const candleX = this.timeToX(candle.time);
-            const candleHighY = this.priceToY(candle.high);
-            const candleLowY = this.priceToY(candle.low);
-            
-            // Check if candle is within X range
-            if (candleX < x1 || candleX > x2) return false;
-            
-            // Check if candle overlaps with Y range
-            return !(candleLowY > y2 || candleHighY < y1);
-        });
-        
-        if (selectedCandles.length === 0) {
-            return {
-                count: 0,
-                percentChange: '0%',
-                timePeriod: '0н 0ч',
-                bars: 0
-            };
-        }
-        
-        // Sort candles by time to get first and last
-        const sortedCandles = [...selectedCandles].sort((a, b) => a.time - b.time);
-        const firstCandle = sortedCandles[0];
-        const lastCandle = sortedCandles[sortedCandles.length - 1];
-        const firstPrice = firstCandle.open;
-        const lastPrice = lastCandle.close;
-        
-        // Calculate percentage change
-        const percentChange = ((lastPrice - firstPrice) / firstPrice) * 100;
-        const percentChangeStr = (percentChange >= 0 ? '+' : '') + percentChange.toFixed(2) + '%';
-        
-        // Calculate time period in weeks and hours
-        const timeDiff = endTime - startTime;
-        const weeks = Math.floor(timeDiff / (7 * 24 * 60 * 60 * 1000));
-        const hours = Math.floor((timeDiff % (7 * 24 * 60 * 60 * 1000)) / (60 * 60 * 1000));
-        const timePeriodStr = `${weeks}н ${hours}ч`;
-        
-        return {
-            count: selectedCandles.length,
-            percentChange: percentChangeStr,
-            timePeriod: timePeriodStr,
-            bars: selectedCandles.length
-        };
+        return this.calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice);
     }
     
     yToPrice(y) {
@@ -739,8 +717,7 @@ class CandlestickChart {
         if (oldChartWidth > 0 && this.chartWidth !== oldChartWidth) {
             const rightEdge = this.logicalWidth - this.padding.right;
             this.horizontalLines.forEach(line => {
-                // Keep the same Y coordinate, update X2 to new right edge
-                line.x2 = rightEdge;
+                if (line.x2 != null) line.x2 = rightEdge;
             });
         }
         
@@ -1591,32 +1568,32 @@ class CandlestickChart {
         
         this.ctx.setLineDash([]);
         
-        // Draw completed selections
+        // Draw completed selections (привязка к данным: time/price -> x,y)
         this.rulerSelections.forEach(selection => {
-            let x = Math.min(selection.x1, selection.x2);
-            let y = Math.min(selection.y1, selection.y2);
-            let width = Math.abs(selection.x2 - selection.x1);
-            let height = Math.abs(selection.y2 - selection.y1);
-            
-            // Clip rectangle to chart bounds
+            let x1, y1, x2, y2;
+            if (selection.time1 != null && selection.price1 != null) {
+                x1 = this.timeToX(selection.time1);
+                y1 = this.priceToY(selection.price1);
+                x2 = this.timeToX(selection.time2);
+                y2 = this.priceToY(selection.price2);
+            } else {
+                x1 = selection.x1; y1 = selection.y1; x2 = selection.x2; y2 = selection.y2;
+            }
+            let x = Math.min(x1, x2);
+            let y = Math.min(y1, y2);
+            let width = Math.abs(x2 - x1);
+            let height = Math.abs(y2 - y1);
             const clippedX = Math.max(minX, x);
             const clippedY = Math.max(minY, y);
             const clippedWidth = Math.min(maxX, x + width) - clippedX;
             const clippedHeight = Math.min(maxY, y + height) - clippedY;
-            
             if (clippedWidth > 0 && clippedHeight > 0) {
-                // Draw green background (like in image)
-                this.ctx.fillStyle = 'rgba(76, 175, 80, 0.3)'; // Green with transparency
+                this.ctx.fillStyle = 'rgba(76, 175, 80, 0.3)';
                 this.ctx.fillRect(clippedX, clippedY, clippedWidth, clippedHeight);
-                
-                // Draw border
                 this.ctx.strokeStyle = '#4caf50';
                 this.ctx.lineWidth = 2;
                 this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
-                
-                // Draw summary text in green box (use original coordinates for positioning)
                 if (selection.summary && width > 80 && height > 50) {
-                    // Only draw if text box would be visible
                     if (x + 150 <= maxX && y + 80 <= maxY) {
                         this.drawRulerSummaryBox(x, y, width, height, selection.summary);
                     }
@@ -1840,19 +1817,25 @@ class CandlestickChart {
             this.ctx.lineWidth = 2;
             
             this.horizontalLines.forEach(line => {
-                // Clip line to chart bounds
-                const clipped = this.clipLineToBounds(line.x1, line.y1, line.x2, line.y2, minX, minY, maxX, maxY);
+                let x1, y1, x2, y2;
+                if (line.time1 != null && line.price != null) {
+                    x1 = this.timeToX(line.time1);
+                    y1 = this.priceToY(line.price);
+                    x2 = maxX;
+                    y2 = y1;
+                } else {
+                    x1 = line.x1; y1 = line.y1; x2 = line.x2; y2 = line.y2;
+                }
+                const clipped = this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
                 if (clipped) {
                     this.ctx.beginPath();
                     this.ctx.moveTo(clipped.x1, clipped.y1);
                     this.ctx.lineTo(clipped.x2, clipped.y2);
                     this.ctx.stroke();
-                    
-                    // Draw point at start (only if visible)
-                    if (line.x1 >= minX && line.x1 <= maxX && line.y1 >= minY && line.y1 <= maxY) {
+                    if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                         this.ctx.fillStyle = '#4a9eff';
                         this.ctx.beginPath();
-                        this.ctx.arc(line.x1, line.y1, 4, 0, Math.PI * 2);
+                        this.ctx.arc(x1, y1, 4, 0, Math.PI * 2);
                         this.ctx.fill();
                     }
                 }
@@ -1867,34 +1850,36 @@ class CandlestickChart {
             
             // Draw completed rectangles
             this.rectangles.forEach(rect => {
-                let x = Math.min(rect.x1, rect.x2);
-                let y = Math.min(rect.y1, rect.y2);
-                let width = Math.abs(rect.x2 - rect.x1);
-                let height = Math.abs(rect.y2 - rect.y1);
-                
-                // Clip rectangle to chart bounds
+                let x1, y1, x2, y2;
+                if (rect.time1 != null && rect.price1 != null) {
+                    x1 = this.timeToX(rect.time1);
+                    y1 = this.priceToY(rect.price1);
+                    x2 = this.timeToX(rect.time2);
+                    y2 = this.priceToY(rect.price2);
+                } else {
+                    x1 = rect.x1; y1 = rect.y1; x2 = rect.x2; y2 = rect.y2;
+                }
+                let x = Math.min(x1, x2);
+                let y = Math.min(y1, y2);
+                let width = Math.abs(x2 - x1);
+                let height = Math.abs(y2 - y1);
                 const clippedX = Math.max(minX, x);
                 const clippedY = Math.max(minY, y);
                 const clippedWidth = Math.min(maxX, x + width) - clippedX;
                 const clippedHeight = Math.min(maxY, y + height) - clippedY;
-                
                 if (clippedWidth > 0 && clippedHeight > 0) {
-                    // Fill rectangle
                     this.ctx.fillRect(clippedX, clippedY, clippedWidth, clippedHeight);
-                    // Stroke rectangle
                     this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
                 }
-                
-                // Draw corner points (only if visible)
                 this.ctx.fillStyle = '#4a9eff';
-                if (rect.x1 >= minX && rect.x1 <= maxX && rect.y1 >= minY && rect.y1 <= maxY) {
+                if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                     this.ctx.beginPath();
-                    this.ctx.arc(rect.x1, rect.y1, 4, 0, Math.PI * 2);
+                    this.ctx.arc(x1, y1, 4, 0, Math.PI * 2);
                     this.ctx.fill();
                 }
-                if (rect.x2 >= minX && rect.x2 <= maxX && rect.y2 >= minY && rect.y2 <= maxY) {
+                if (x2 >= minX && x2 <= maxX && y2 >= minY && y2 <= maxY) {
                     this.ctx.beginPath();
-                    this.ctx.arc(rect.x2, rect.y2, 4, 0, Math.PI * 2);
+                    this.ctx.arc(x2, y2, 4, 0, Math.PI * 2);
                     this.ctx.fill();
                 }
             });
@@ -1947,24 +1932,30 @@ class CandlestickChart {
             
             // Draw completed lines
             this.drawnLines.forEach(line => {
-                // Clip line to chart bounds
-                const clipped = this.clipLineToBounds(line.x1, line.y1, line.x2, line.y2, minX, minY, maxX, maxY);
+                let x1, y1, x2, y2;
+                if (line.time1 != null && line.price1 != null) {
+                    x1 = this.timeToX(line.time1);
+                    y1 = this.priceToY(line.price1);
+                    x2 = this.timeToX(line.time2);
+                    y2 = this.priceToY(line.price2);
+                } else {
+                    x1 = line.x1; y1 = line.y1; x2 = line.x2; y2 = line.y2;
+                }
+                const clipped = this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
                 if (clipped) {
                     this.ctx.beginPath();
                     this.ctx.moveTo(clipped.x1, clipped.y1);
                     this.ctx.lineTo(clipped.x2, clipped.y2);
                     this.ctx.stroke();
-                    
-                    // Draw points at line ends (only if visible)
                     this.ctx.fillStyle = '#4a9eff';
-                    if (line.x1 >= minX && line.x1 <= maxX && line.y1 >= minY && line.y1 <= maxY) {
+                    if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                         this.ctx.beginPath();
-                        this.ctx.arc(line.x1, line.y1, 3, 0, Math.PI * 2);
+                        this.ctx.arc(x1, y1, 3, 0, Math.PI * 2);
                         this.ctx.fill();
                     }
-                    if (line.x2 >= minX && line.x2 <= maxX && line.y2 >= minY && line.y2 <= maxY) {
+                    if (x2 >= minX && x2 <= maxX && y2 >= minY && y2 <= maxY) {
                         this.ctx.beginPath();
-                        this.ctx.arc(line.x2, line.y2, 3, 0, Math.PI * 2);
+                        this.ctx.arc(x2, y2, 3, 0, Math.PI * 2);
                         this.ctx.fill();
                     }
                 }
