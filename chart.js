@@ -14,6 +14,7 @@ class CandlestickChart {
         this.padding = { top: 20, right: 80, bottom: 80, left: 10 }; // Increased bottom for volume
         this.chartWidth = 0;
         this.chartHeight = 0;
+        this.chartEndPositionRatio = 2 / 3; // окончание графика (последняя свеча) на 2/3 ширины экрана
         this.volumeHeight = 50; // Height reserved for volume bars
         
         // Price range - will be calculated from data
@@ -132,24 +133,20 @@ class CandlestickChart {
                 return;
             }
             
-            // Колёсико: общий зум (по обеим осям). Масштаб по осям по отдельности — правой кнопкой мыши сдвигом (см. setupDrawingEvents).
+            // Колёсико: общий зум. При прокрутке назад — уменьшение графика и появление свободного пространства вокруг.
             const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
             const currentTimeRange = this.visibleEndTime - this.visibleStartTime;
             const currentPriceRange = this.visibleMaxPrice - this.visibleMinPrice;
             const mouseTime = this.xToTime(mouseX);
             const mousePrice = this.yToPrice(mouseY);
-            const normalizedX = (mouseX - this.padding.left) / this.chartWidth;
+            const normalizedX = this.chartWidth > 0 ? (mouseX - this.padding.left) / this.chartWidth : 0.5;
             const normalizedY = (this.padding.top + chartAreaHeight - mouseY) / chartAreaHeight;
-            const newTimeRange = Math.max(this.timeRange * 0.005, Math.min(this.timeRange, currentTimeRange / zoomFactor));
-            const newPriceRange = Math.max(this.priceRange * 0.005, Math.min(this.priceRange, currentPriceRange / zoomFactor));
+            const newTimeRange = Math.max(this.timeRange * 0.005, currentTimeRange / zoomFactor);
+            const newPriceRange = Math.max(this.priceRange * 0.005, currentPriceRange / zoomFactor);
             let newStartTime = mouseTime - currentTimeRange * normalizedX * (newTimeRange / currentTimeRange);
             let newEndTime = newStartTime + newTimeRange;
             let newMinPrice = mousePrice - currentPriceRange * normalizedY * (newPriceRange / currentPriceRange);
             let newMaxPrice = newMinPrice + newPriceRange;
-            if (newStartTime < this.startTime) { newStartTime = this.startTime; newEndTime = Math.min(this.endTime, newStartTime + newTimeRange); }
-            if (newEndTime > this.endTime) { newEndTime = this.endTime; newStartTime = Math.max(this.startTime, newEndTime - newTimeRange); }
-            if (newMinPrice < this.minPrice) { newMinPrice = this.minPrice; newMaxPrice = Math.min(this.maxPrice, newMinPrice + newPriceRange); }
-            if (newMaxPrice > this.maxPrice) { newMaxPrice = this.maxPrice; newMinPrice = Math.max(this.minPrice, newMaxPrice - newPriceRange); }
             this.zoomLevel *= zoomFactor;
             this.visibleStartTime = newStartTime;
             this.visibleEndTime = newEndTime;
@@ -236,7 +233,7 @@ class CandlestickChart {
                 const deltaX = x - this.zoomDragStartX;
                 const deltaY = y - this.zoomDragStartY;
                 const chartAreaHeight = this.chartHeight - this.volumeHeight;
-                const normX = (this.zoomDragStartX - this.padding.left) / this.chartWidth;
+                const normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
                 const normY = 1 - (this.zoomDragStartY - this.padding.top) / chartAreaHeight;
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
                 const pivotPrice = this.zoomDragStartVisible.minPrice + normY * (this.zoomDragStartVisible.maxPrice - this.zoomDragStartVisible.minPrice);
@@ -244,8 +241,8 @@ class CandlestickChart {
                 const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
                 let newTimeRange = this.zoomDragStartTimeRange * timeMult;
                 let newPriceRange = this.zoomDragStartPriceRange * priceMult;
-                newTimeRange = Math.max(this.timeRange * 0.005, Math.min(this.timeRange, newTimeRange));
-                newPriceRange = Math.max(this.priceRange * 0.005, Math.min(this.priceRange, newPriceRange));
+                newTimeRange = Math.max(this.timeRange * 0.005, newTimeRange);
+                newPriceRange = Math.max(this.priceRange * 0.005, newPriceRange);
                 let newStartTime = pivotTime - newTimeRange * normX;
                 let newEndTime = newStartTime + newTimeRange;
                 let newMinPrice = pivotPrice - newPriceRange * normY;
@@ -271,7 +268,7 @@ class CandlestickChart {
                 const deltaY = y - this.panStartY;
                 const timeRange = this.panStartVisibleEndTime - this.panStartVisibleStartTime;
                 const priceRange = this.panStartVisibleMaxPrice - this.panStartVisibleMinPrice;
-                const timeDelta = -(deltaX / this.chartWidth) * timeRange;
+                const timeDelta = (this.chartWidth > 0) ? -(deltaX / this.chartWidth) * timeRange : 0;
                 const priceDelta = (deltaY / (this.chartHeight - this.volumeHeight)) * priceRange;
                 
                 const panTime = !e.altKey;
@@ -696,7 +693,9 @@ class CandlestickChart {
     
     xToTime(x) {
         const visibleTimeRange = this.visibleEndTime - this.visibleStartTime;
-        const normalized = (x - this.padding.left) / this.chartWidth;
+        if (this.chartWidth <= 0) return this.visibleStartTime;
+        let normalized = (x - this.padding.left) / this.chartWidth;
+        normalized = Math.max(0, Math.min(1, normalized));
         return this.visibleStartTime + normalized * visibleTimeRange;
     }
     
@@ -1075,6 +1074,28 @@ class CandlestickChart {
         if (el('metricVolumeValue')) el('metricVolumeValue').textContent = volStr;
     }
     
+    getIntervalMs(interval) {
+        const m = (interval || this.interval || '1d').toString().toLowerCase().match(/^(\d+)(m|h|d|w)$/);
+        if (!m) return 24 * 60 * 60 * 1000;
+        const n = parseInt(m[1], 10);
+        const u = m[2];
+        if (u === 'm') return n * 60 * 1000;
+        if (u === 'h') return n * 60 * 60 * 1000;
+        if (u === 'd') return n * 24 * 60 * 60 * 1000;
+        if (u === 'w') return n * 7 * 24 * 60 * 60 * 1000;
+        return 24 * 60 * 60 * 1000;
+    }
+    
+    getDefaultVisibleCandles(interval) {
+        const s = (interval || this.interval || '1d').toString().toLowerCase();
+        if (s === '1m' || s === '3m') return 35;
+        if (s === '5m') return 40;
+        if (s === '15m' || s === '30m') return 50;
+        if (s === '1h' || s === '2h') return 60;
+        if (s === '4h') return 70;
+        return 90;
+    }
+    
     initializeFromData() {
         if (this.candles.length === 0) {
             console.error('No candles data to initialize!');
@@ -1101,10 +1122,13 @@ class CandlestickChart {
         this.endTime = this.candles[this.candles.length - 1].time;
         this.timeRange = this.endTime - this.startTime;
         
-        // Zoom and pan state - show last 25% of data initially
-        const visibleTimeRange = this.timeRange * 0.25;
-        this.visibleStartTime = this.endTime - visibleTimeRange;
-        this.visibleEndTime = this.endTime;
+        // Чем меньше таймфрейм — показываем меньше свечей по умолчанию. Окончание графика смещаем на 2/3 ширины (справа пусто).
+        const intervalMs = this.getIntervalMs(this.interval);
+        const targetCandles = this.getDefaultVisibleCandles(this.interval);
+        const dataTimeRange = Math.min(this.timeRange, targetCandles * intervalMs);
+        this.visibleStartTime = this.endTime - dataTimeRange;
+        const ratio = this.chartEndPositionRatio;
+        this.visibleEndTime = this.endTime + dataTimeRange * (1 / ratio - 1);
         this.visibleMinPrice = this.minPrice;
         this.visibleMaxPrice = this.maxPrice;
         
@@ -1178,6 +1202,7 @@ class CandlestickChart {
     
     timeToX(time) {
         const visibleTimeRange = this.visibleEndTime - this.visibleStartTime;
+        if (visibleTimeRange <= 0) return this.padding.left;
         const normalized = (time - this.visibleStartTime) / visibleTimeRange;
         return this.padding.left + (normalized * this.chartWidth);
     }
@@ -1326,7 +1351,10 @@ class CandlestickChart {
         if (visibleCandles.length === 0) return;
         
         const visibleTimeRange = this.visibleEndTime - this.visibleStartTime;
-        const candleWidth = Math.max(1, this.chartWidth / visibleCandles.length * 0.7);
+        const intervalMs = this.getIntervalMs(this.interval);
+        const candleWidth = visibleTimeRange > 0
+            ? Math.max(1, (this.chartWidth * intervalMs / visibleTimeRange) * 0.7)
+            : Math.max(1, this.chartWidth / visibleCandles.length * 0.7);
         const wickWidth = 1;
         
         // Chart area bounds for clipping
@@ -1427,7 +1455,11 @@ class CandlestickChart {
         const volumeY = this.padding.top + chartAreaHeight;
         const volumeMaxY = volumeY + this.volumeHeight;
         
-        const barWidth = this.chartWidth / visibleCandles.length;
+        const visibleTimeRange = this.visibleEndTime - this.visibleStartTime;
+        const intervalMs = this.getIntervalMs(this.interval);
+        const barWidth = visibleTimeRange > 0
+            ? (this.chartWidth * intervalMs / visibleTimeRange)
+            : (this.chartWidth / visibleCandles.length);
         
         visibleCandles.forEach((candle, index) => {
             if (!candle || !candle.time) return;
