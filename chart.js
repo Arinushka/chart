@@ -49,6 +49,7 @@ class CandlestickChart {
         this.currentRulerSelection = null; // Current ruler selection being drawn
         this.tempPoint = null; // Temporary point for preview
         this.drawingsVisible = true; // Toggle visibility of all drawn elements (lines, rectangles, ruler, etc.)
+        this.selectedDrawing = null; // { type: 'line'|'rect'|'ray'|'ruler', index: number } — выделенный элемент для удаления по Delete/Backspace
         
         // Panning state
         this.isPanning = false;
@@ -158,66 +159,52 @@ class CandlestickChart {
     
     setupResetZoomContextMenu() {
         const chartInstance = this;
-        const wrap = document.getElementById('chartWrapper') || this.canvas.closest('.chart-wrapper');
-        const container = wrap || document.body;
-        const menu = document.createElement('div');
-        menu.className = 'chart-reset-zoom-menu';
-        menu.setAttribute('role', 'menu');
-        menu.innerHTML = '<button type="button" class="chart-reset-zoom-btn">Сбросить масштаб</button>';
-        menu.style.display = 'none';
-        container.appendChild(menu);
-        this.resetZoomMenuEl = menu;
-        const btn = menu.querySelector('.chart-reset-zoom-btn');
+        const chartArea = this.canvas.parentElement;
+        if (!chartArea) return;
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'chart-reset-zoom-corner-btn';
+        btn.textContent = 'Сбросить масштаб';
+        btn.style.display = 'none';
+        chartArea.appendChild(btn);
+        this.resetZoomBtnEl = btn;
         btn.addEventListener('click', () => {
             chartInstance.resetZoomToDefault();
-            chartInstance.hideResetZoomMenu();
+            chartInstance.hideResetZoomButton();
         });
-        const closeIfOutside = (e) => {
-            if (menu.style.display !== 'none' && !menu.contains(e.target)) {
-                chartInstance.hideResetZoomMenu();
-                document.removeEventListener('mousedown', closeIfOutside);
-            }
-        };
-        this._resetZoomCloseOutside = closeIfOutside;
     }
     
-    showResetZoomMenu(clientX, clientY) {
-        if (!this.resetZoomMenuEl) return;
-        const menu = this.resetZoomMenuEl;
-        const padding = 8;
-        menu.style.left = clientX + padding + 'px';
-        menu.style.top = clientY + padding + 'px';
-        menu.style.display = 'block';
-        // Подправить позицию, чтобы меню всегда было в пределах окна
-        requestAnimationFrame(() => {
-            const rect = menu.getBoundingClientRect();
-            const vw = window.innerWidth;
-            const vh = window.innerHeight;
-            let left = rect.left;
-            let top = rect.top;
-            if (left + rect.width > vw - padding) left = clientX - rect.width - padding;
-            if (top + rect.height > vh - padding) top = clientY - rect.height - padding;
-            if (left < padding) left = padding;
-            if (top < padding) top = padding;
-            menu.style.left = left + 'px';
-            menu.style.top = top + 'px';
-        });
-        setTimeout(() => document.addEventListener('mousedown', this._resetZoomCloseOutside), 0);
+    showResetZoomButton() {
+        if (this.resetZoomBtnEl) this.resetZoomBtnEl.style.display = 'block';
     }
     
-    hideResetZoomMenu() {
-        if (!this.resetZoomMenuEl) return;
-        this.resetZoomMenuEl.style.display = 'none';
-        document.removeEventListener('mousedown', this._resetZoomCloseOutside);
+    hideResetZoomButton() {
+        if (this.resetZoomBtnEl) this.resetZoomBtnEl.style.display = 'none';
     }
     
     resetZoomToDefault() {
-        this.visibleStartTime = this.startTime;
-        this.visibleEndTime = this.endTime;
-        this.visibleMinPrice = this.minPrice;
-        this.visibleMaxPrice = this.maxPrice;
+        // Восстанавливаем вид как при первоначальной отрисовке (как в initializeFromData)
+        const intervalMs = this.getIntervalMs(this.interval);
+        const targetCandles = this.getDefaultVisibleCandles(this.interval);
+        const dataTimeRange = Math.min(this.timeRange, targetCandles * intervalMs);
+        this.visibleStartTime = this.endTime - dataTimeRange;
+        const ratio = this.chartEndPositionRatio;
+        this.visibleEndTime = this.endTime + dataTimeRange * (1 / ratio - 1);
+        const visibleCandles = this.candles.filter(c => c.time >= this.visibleStartTime && c.time <= this.endTime);
+        if (visibleCandles.length > 0) {
+            const vHigh = Math.max(...visibleCandles.map(c => c.high));
+            const vLow = Math.min(...visibleCandles.map(c => c.low));
+            const vRange = vHigh - vLow || this.priceRange * 0.1;
+            const pad = vRange * 0.1;
+            this.visibleMinPrice = vLow - pad;
+            this.visibleMaxPrice = vHigh + pad;
+        } else {
+            this.visibleMinPrice = this.minPrice;
+            this.visibleMaxPrice = this.maxPrice;
+        }
         this.zoomLevel = 1.0;
         this.axisZoomUsed = false;
+        this.hideResetZoomButton();
         this.draw();
     }
     
@@ -254,6 +241,7 @@ class CandlestickChart {
                 this.visibleMinPrice = newMinPrice;
                 this.visibleMaxPrice = newMaxPrice;
                 this.axisZoomUsed = true;
+                this.showResetZoomButton();
                 this.draw();
                 return;
             }
@@ -419,30 +407,51 @@ class CandlestickChart {
             }
             
             // Handle brush drawing mode
-            if (!this.drawingMode) return;
-            
-            if (!this.currentLine) {
-                // First point
-                this.currentLine = { x1: x, y1: y, x2: null, y2: null };
-                this.tempPoint = { x, y };
-                this.draw();
-            } else {
-                // Second point - complete the line (сохраняем в координатах графика: время, цена)
-                this.currentLine.x2 = x;
-                this.currentLine.y2 = y;
-                this.drawnLines.push({
-                    time1: this.xToTime(this.currentLine.x1),
-                    price1: this.yToPrice(this.currentLine.y1),
-                    time2: this.xToTime(this.currentLine.x2),
-                    price2: this.yToPrice(this.currentLine.y2)
-                });
-                this.currentLine = null;
-                this.tempPoint = null;
-                this.draw();
-                this.setDrawingMode(false);
-                document.querySelector('.tool-btn[title="Brush"]')?.classList.remove('active');
+            if (this.drawingMode) {
+                if (!this.currentLine) {
+                    this.currentLine = { x1: x, y1: y, x2: null, y2: null };
+                    this.tempPoint = { x, y };
+                    this.draw();
+                } else {
+                    this.currentLine.x2 = x;
+                    this.currentLine.y2 = y;
+                    this.drawnLines.push({
+                        time1: this.xToTime(this.currentLine.x1),
+                        price1: this.yToPrice(this.currentLine.y1),
+                        time2: this.xToTime(this.currentLine.x2),
+                        price2: this.yToPrice(this.currentLine.y2)
+                    });
+                    this.currentLine = null;
+                    this.tempPoint = null;
+                    this.draw();
+                    this.setDrawingMode(false);
+                    document.querySelector('.tool-btn[title="Brush"]')?.classList.remove('active');
+                }
+                return;
             }
+            
+            // Выделение элемента по клику (вне режимов рисования) для удаления по Delete/Backspace
+            const hit = this.hitTestDrawnElements(x, y);
+            this.selectedDrawing = hit;
+            this.canvas.focus();
+            this.draw();
         });
+        
+        // Delete/Backspace — удалить выделенный элемент (на document, чтобы работало при любом фокусе)
+        const onKeyDown = (e) => {
+            if ((e.key !== 'Delete' && e.key !== 'Backspace') || !this.selectedDrawing) return;
+            const el = document.activeElement;
+            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+            e.preventDefault();
+            const s = this.selectedDrawing;
+            if (s.type === 'line') this.drawnLines.splice(s.index, 1);
+            else if (s.type === 'rect') this.rectangles.splice(s.index, 1);
+            else if (s.type === 'ray') this.horizontalLines.splice(s.index, 1);
+            else if (s.type === 'ruler') this.rulerSelections.splice(s.index, 1);
+            this.selectedDrawing = null;
+            this.draw();
+        };
+        document.addEventListener('keydown', onKeyDown);
         
         // Mouse down: в области осей (слева/снизу) — масштабирование по осям; в области графика — панорамирование
         this.canvas.addEventListener('mousedown', (e) => {
@@ -519,24 +528,38 @@ class CandlestickChart {
             }
         });
         
-        // Правая кнопка мыши: в режиме Brush/Ruler/Rectangle — отменить текущее рисование; иначе показать кнопку «Сбросить масштаб»
+        // Правая кнопка мыши: отменить текущее рисование или удалить элемент при клике по линии/прямоугольнику/лучу
         this.canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
             if (this.drawingMode && this.currentLine) {
                 this.currentLine = null;
                 this.tempPoint = null;
                 this.draw();
+                return;
             }
             if (this.rulerMode && this.currentRulerSelection) {
                 this.currentRulerSelection = null;
                 this.draw();
+                return;
             }
             if (this.rectangleMode && this.currentRectangle) {
                 this.currentRectangle = null;
                 this.tempPoint = null;
                 this.draw();
+                return;
             }
-            if (this.axisZoomUsed) this.showResetZoomMenu(e.clientX, e.clientY);
+            const rect = this.canvas.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const hit = this.hitTestDrawnElements(x, y);
+            if (hit) {
+                if (hit.type === 'line') this.drawnLines.splice(hit.index, 1);
+                else if (hit.type === 'rect') this.rectangles.splice(hit.index, 1);
+                else if (hit.type === 'ray') this.horizontalLines.splice(hit.index, 1);
+                else if (hit.type === 'ruler') this.rulerSelections.splice(hit.index, 1);
+                this.selectedDrawing = null;
+                this.draw();
+            }
         });
         
         // Change cursor when in drawing mode or panning
@@ -679,6 +702,83 @@ class CandlestickChart {
         let normalized = (x - this.padding.left) / this.chartWidth;
         normalized = Math.max(0, Math.min(1, normalized));
         return this.visibleStartTime + normalized * visibleTimeRange;
+    }
+    
+    distanceToSegment(px, py, x1, y1, x2, y2) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.hypot(dx, dy) || 1e-6;
+        const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / (len * len)));
+        const nx = x1 + t * dx;
+        const ny = y1 + t * dy;
+        return Math.hypot(px - nx, py - ny);
+    }
+    
+    hitTestDrawnElements(px, py) {
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const maxX = this.logicalWidth - this.padding.right;
+        const threshold = 10;
+        for (let i = this.rectangles.length - 1; i >= 0; i--) {
+            const rect = this.rectangles[i];
+            let x1, y1, x2, y2;
+            if (rect.time1 != null && rect.price1 != null) {
+                x1 = this.timeToX(rect.time1);
+                y1 = this.priceToY(rect.price1);
+                x2 = this.timeToX(rect.time2);
+                y2 = this.priceToY(rect.price2);
+            } else {
+                x1 = rect.x1; y1 = rect.y1; x2 = rect.x2; y2 = rect.y2;
+            }
+            const x = Math.min(x1, x2) - threshold;
+            const y = Math.min(y1, y2) - threshold;
+            const w = Math.abs(x2 - x1) + 2 * threshold;
+            const h = Math.abs(y2 - y1) + 2 * threshold;
+            if (px >= x && px <= x + w && py >= y && py <= y + h) return { type: 'rect', index: i };
+        }
+        for (let i = this.horizontalLines.length - 1; i >= 0; i--) {
+            const line = this.horizontalLines[i];
+            let x1, y1, x2, y2;
+            if (line.time1 != null && line.price != null) {
+                x1 = this.timeToX(line.time1);
+                y1 = this.priceToY(line.price);
+                x2 = maxX;
+                y2 = y1;
+            } else {
+                x1 = line.x1; y1 = line.y1; x2 = line.x2; y2 = line.y2;
+            }
+            if (this.distanceToSegment(px, py, x1, y1, x2, y2) <= threshold && px >= Math.min(x1, x2) - threshold) return { type: 'ray', index: i };
+        }
+        for (let i = this.drawnLines.length - 1; i >= 0; i--) {
+            const line = this.drawnLines[i];
+            let x1, y1, x2, y2;
+            if (line.time1 != null && line.price1 != null) {
+                x1 = this.timeToX(line.time1);
+                y1 = this.priceToY(line.price1);
+                x2 = this.timeToX(line.time2);
+                y2 = this.priceToY(line.price2);
+            } else {
+                x1 = line.x1; y1 = line.y1; x2 = line.x2; y2 = line.y2;
+            }
+            if (this.distanceToSegment(px, py, x1, y1, x2, y2) <= threshold) return { type: 'line', index: i };
+        }
+        for (let i = this.rulerSelections.length - 1; i >= 0; i--) {
+            const sel = this.rulerSelections[i];
+            let x1, y1, x2, y2;
+            if (sel.time1 != null && sel.price1 != null) {
+                x1 = this.timeToX(sel.time1);
+                y1 = this.priceToY(sel.price1);
+                x2 = this.timeToX(sel.time2);
+                y2 = this.priceToY(sel.price2);
+            } else {
+                x1 = sel.x1; y1 = sel.y1; x2 = sel.x2; y2 = sel.y2;
+            }
+            const x = Math.min(x1, x2) - threshold;
+            const y = Math.min(y1, y2) - threshold;
+            const w = Math.abs(x2 - x1) + 2 * threshold;
+            const h = Math.abs(y2 - y1) + 2 * threshold;
+            if (px >= x && px <= x + w && py >= y && py <= y + h) return { type: 'ruler', index: i };
+        }
+        return null;
     }
     
     clearDrawnLines() {
@@ -1584,7 +1684,8 @@ class CandlestickChart {
         this.ctx.setLineDash([]);
         
         // Draw completed selections (привязка к данным: time/price -> x,y)
-        this.rulerSelections.forEach(selection => {
+        this.rulerSelections.forEach((selection, index) => {
+            const selected = this.selectedDrawing?.type === 'ruler' && this.selectedDrawing?.index === index;
             let x1, y1, x2, y2;
             if (selection.time1 != null && selection.price1 != null) {
                 x1 = this.timeToX(selection.time1);
@@ -1603,10 +1704,10 @@ class CandlestickChart {
             const clippedWidth = Math.min(maxX, x + width) - clippedX;
             const clippedHeight = Math.min(maxY, y + height) - clippedY;
             if (clippedWidth > 0 && clippedHeight > 0) {
-                this.ctx.fillStyle = 'rgba(76, 175, 80, 0.3)';
+                this.ctx.fillStyle = selected ? 'rgba(255, 167, 38, 0.25)' : 'rgba(76, 175, 80, 0.3)';
                 this.ctx.fillRect(clippedX, clippedY, clippedWidth, clippedHeight);
-                this.ctx.strokeStyle = '#4caf50';
-                this.ctx.lineWidth = 2;
+                this.ctx.strokeStyle = selected ? '#ffa726' : '#4caf50';
+                this.ctx.lineWidth = selected ? 4 : 2;
                 this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
                 if (selection.summary && width > 80 && height > 50) {
                     if (x + 150 <= maxX && y + 80 <= maxY) {
@@ -1828,10 +1929,10 @@ class CandlestickChart {
         
         // Draw horizontal rays
         if (hasHorizontalLines) {
-            this.ctx.strokeStyle = '#4a9eff';
-            this.ctx.lineWidth = 2;
-            
-            this.horizontalLines.forEach(line => {
+            this.horizontalLines.forEach((line, index) => {
+                const selected = this.selectedDrawing?.type === 'ray' && this.selectedDrawing?.index === index;
+                this.ctx.strokeStyle = selected ? '#ffa726' : '#4a9eff';
+                this.ctx.lineWidth = selected ? 4 : 2;
                 let x1, y1, x2, y2;
                 if (line.time1 != null && line.price != null) {
                     x1 = this.timeToX(line.time1);
@@ -1848,9 +1949,9 @@ class CandlestickChart {
                     this.ctx.lineTo(clipped.x2, clipped.y2);
                     this.ctx.stroke();
                     if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
-                        this.ctx.fillStyle = '#4a9eff';
+                        this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
                         this.ctx.beginPath();
-                        this.ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+                        this.ctx.arc(x1, y1, selected ? 5 : 4, 0, Math.PI * 2);
                         this.ctx.fill();
                     }
                 }
@@ -1864,7 +1965,10 @@ class CandlestickChart {
             this.ctx.fillStyle = 'rgba(74, 158, 255, 0.1)'; // Semi-transparent fill
             
             // Draw completed rectangles
-            this.rectangles.forEach(rect => {
+            this.rectangles.forEach((rect, index) => {
+                const selected = this.selectedDrawing?.type === 'rect' && this.selectedDrawing?.index === index;
+                this.ctx.strokeStyle = selected ? '#ffa726' : '#4a9eff';
+                this.ctx.lineWidth = selected ? 4 : 2;
                 let x1, y1, x2, y2;
                 if (rect.time1 != null && rect.price1 != null) {
                     x1 = this.timeToX(rect.time1);
@@ -1886,21 +1990,24 @@ class CandlestickChart {
                     this.ctx.fillRect(clippedX, clippedY, clippedWidth, clippedHeight);
                     this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
                 }
-                this.ctx.fillStyle = '#4a9eff';
+                this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
                 if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                     this.ctx.beginPath();
-                    this.ctx.arc(x1, y1, 4, 0, Math.PI * 2);
+                    this.ctx.arc(x1, y1, selected ? 5 : 4, 0, Math.PI * 2);
                     this.ctx.fill();
                 }
                 if (x2 >= minX && x2 <= maxX && y2 >= minY && y2 <= maxY) {
                     this.ctx.beginPath();
-                    this.ctx.arc(x2, y2, 4, 0, Math.PI * 2);
+                    this.ctx.arc(x2, y2, selected ? 5 : 4, 0, Math.PI * 2);
                     this.ctx.fill();
                 }
             });
             
             // Draw current rectangle being created (with preview)
             if (this.currentRectangle && this.tempPoint) {
+                this.ctx.fillStyle = 'rgba(74, 158, 255, 0.1)';
+                this.ctx.strokeStyle = '#4a9eff';
+                this.ctx.lineWidth = 2;
                 let x = Math.min(this.currentRectangle.x1, this.tempPoint.x);
                 let y = Math.min(this.currentRectangle.y1, this.tempPoint.y);
                 let width = Math.abs(this.tempPoint.x - this.currentRectangle.x1);
@@ -1946,7 +2053,10 @@ class CandlestickChart {
             this.ctx.lineWidth = 2;
             
             // Draw completed lines
-            this.drawnLines.forEach(line => {
+            this.drawnLines.forEach((line, index) => {
+                const selected = this.selectedDrawing?.type === 'line' && this.selectedDrawing?.index === index;
+                this.ctx.strokeStyle = selected ? '#ffa726' : '#4a9eff';
+                this.ctx.lineWidth = selected ? 4 : 2;
                 let x1, y1, x2, y2;
                 if (line.time1 != null && line.price1 != null) {
                     x1 = this.timeToX(line.time1);
@@ -1962,15 +2072,15 @@ class CandlestickChart {
                     this.ctx.moveTo(clipped.x1, clipped.y1);
                     this.ctx.lineTo(clipped.x2, clipped.y2);
                     this.ctx.stroke();
-                    this.ctx.fillStyle = '#4a9eff';
+                    this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
                     if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                         this.ctx.beginPath();
-                        this.ctx.arc(x1, y1, 3, 0, Math.PI * 2);
+                        this.ctx.arc(x1, y1, selected ? 5 : 3, 0, Math.PI * 2);
                         this.ctx.fill();
                     }
                     if (x2 >= minX && x2 <= maxX && y2 >= minY && y2 <= maxY) {
                         this.ctx.beginPath();
-                        this.ctx.arc(x2, y2, 3, 0, Math.PI * 2);
+                        this.ctx.arc(x2, y2, selected ? 5 : 3, 0, Math.PI * 2);
                         this.ctx.fill();
                     }
                 }
