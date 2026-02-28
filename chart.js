@@ -110,7 +110,10 @@ class CandlestickChart {
         this.densityVolumePercentage = 2; // Порог плотности, % от суточного объема
         this.densityDepth = 500; // Глубина стакана
         this.densityUpdateTimer = null;
-        this.mmDensityTolerancePct = 0.2; // допустимая разница между % дистанциями bid/ask
+        this.densityRangePct = 8; // искать плотности только в диапазоне +-8% от текущей цены
+        this.densityAnomalyMultiplier = 10; // аномальная плотность относительно среднего объема уровня
+        this.mmDensityTolerancePct = 0.5; // допуск по расстоянию (%)
+        this.mmVolumeToleranceRatio = 0.2; // допуск по объему (20%)
         
         // Bind resize
         window.addEventListener('resize', () => this.resize());
@@ -2874,62 +2877,55 @@ class CandlestickChart {
     }
 
     processOrderBookData(data, dailyVolume, volumePercentage, exchange, market) {
-        const threshold = dailyVolume * (volumePercentage / 100);
         const result = {
             dailyVolume: dailyVolume,
             currentPrice: null,
             bidDensity: null,
             askDensity: null
         };
+        const pickAnomaly = (levels, side, currentPrice) => {
+            // levels: [[price, amount], ...]
+            const prepared = levels.map(([priceStr, amountStr]) => {
+                const price = parseFloat(priceStr);
+                const amount = parseFloat(amountStr);
+                const quoteVolume = price * amount;
+                return { price, amount, quoteVolume };
+            }).filter(l => Number.isFinite(l.price) && Number.isFinite(l.quoteVolume) && l.quoteVolume > 0);
+            if (prepared.length === 0) return null;
+            const avg = prepared.reduce((s, l) => s + l.quoteVolume, 0) / prepared.length;
+            if (!Number.isFinite(avg) || avg <= 0) return null;
+            const anomalyThreshold = avg * this.densityAnomalyMultiplier;
+            const anomalies = prepared.filter(l => l.quoteVolume >= anomalyThreshold);
+            if (anomalies.length === 0) return null;
+            anomalies.sort((a, b) => b.quoteVolume - a.quoteVolume);
+            const best = anomalies[0];
+            const distancePercent = ((best.price - currentPrice) / currentPrice) * 100;
+            return {
+                price: best.price,
+                size: best.quoteVolume,
+                distancePercent,
+                side
+            };
+        };
+
         try {
             if (exchange === 'binance') {
                 if (!data?.bids || !data?.asks) return null;
                 const bestBid = parseFloat(data.bids[0][0]);
                 const bestAsk = parseFloat(data.asks[0][0]);
                 result.currentPrice = (bestBid + bestAsk) / 2;
-                let maxBidVolume = 0;
-                let maxBidPrice = 0;
-                let currentBidVolume = 0;
-                for (const [priceStr, amountStr] of data.bids) {
-                    const price = parseFloat(priceStr);
-                    const amount = parseFloat(amountStr);
-                    currentBidVolume += price * amount;
-                    if (currentBidVolume > maxBidVolume) {
-                        maxBidVolume = currentBidVolume;
-                        maxBidPrice = price;
-                    }
-                }
-                let maxAskVolume = 0;
-                let maxAskPrice = 0;
-                let currentAskVolume = 0;
-                for (const [priceStr, amountStr] of data.asks) {
-                    const price = parseFloat(priceStr);
-                    const amount = parseFloat(amountStr);
-                    currentAskVolume += price * amount;
-                    if (currentAskVolume > maxAskVolume) {
-                        maxAskVolume = currentAskVolume;
-                        maxAskPrice = price;
-                    }
-                }
-                const bidCandidate = maxBidVolume > 0 ? {
-                    price: maxBidPrice,
-                    size: maxBidVolume,
-                    distancePercent: ((maxBidPrice - result.currentPrice) / result.currentPrice) * 100
-                } : null;
-                const askCandidate = maxAskVolume > 0 ? {
-                    price: maxAskPrice,
-                    size: maxAskVolume,
-                    distancePercent: ((maxAskPrice - result.currentPrice) / result.currentPrice) * 100
-                } : null;
-                if (maxBidVolume >= threshold) {
-                    result.bidDensity = bidCandidate;
-                }
-                if (maxAskVolume >= threshold) {
-                    result.askDensity = askCandidate;
-                }
-                // Fallback: если порог не достигнут, все равно показываем максимальные скопления
-                if (!result.bidDensity && bidCandidate) result.bidDensity = bidCandidate;
-                if (!result.askDensity && askCandidate) result.askDensity = askCandidate;
+                const minPrice = result.currentPrice * (1 - this.densityRangePct / 100);
+                const maxPrice = result.currentPrice * (1 + this.densityRangePct / 100);
+                const bidsInRange = data.bids.filter(([p]) => {
+                    const price = parseFloat(p);
+                    return Number.isFinite(price) && price >= minPrice && price <= result.currentPrice;
+                });
+                const asksInRange = data.asks.filter(([p]) => {
+                    const price = parseFloat(p);
+                    return Number.isFinite(price) && price <= maxPrice && price >= result.currentPrice;
+                });
+                result.bidDensity = pickAnomaly(bidsInRange, 'bid', result.currentPrice);
+                result.askDensity = pickAnomaly(asksInRange, 'ask', result.currentPrice);
             } else if (exchange === 'bybit') {
                 if (!data?.result || Number(data?.retCode) !== 0) return null;
                 const bids = data.result.b || [];
@@ -2938,49 +2934,18 @@ class CandlestickChart {
                 const bestBid = parseFloat(bids[0][0]);
                 const bestAsk = parseFloat(asks[0][0]);
                 result.currentPrice = (bestBid + bestAsk) / 2;
-                let maxBidVolume = 0;
-                let maxBidPrice = 0;
-                let currentBidVolume = 0;
-                for (const [priceStr, amountStr] of bids) {
-                    const price = parseFloat(priceStr);
-                    const amount = parseFloat(amountStr);
-                    currentBidVolume += price * amount;
-                    if (currentBidVolume > maxBidVolume) {
-                        maxBidVolume = currentBidVolume;
-                        maxBidPrice = price;
-                    }
-                }
-                let maxAskVolume = 0;
-                let maxAskPrice = 0;
-                let currentAskVolume = 0;
-                for (const [priceStr, amountStr] of asks) {
-                    const price = parseFloat(priceStr);
-                    const amount = parseFloat(amountStr);
-                    currentAskVolume += price * amount;
-                    if (currentAskVolume > maxAskVolume) {
-                        maxAskVolume = currentAskVolume;
-                        maxAskPrice = price;
-                    }
-                }
-                const bidCandidate = maxBidVolume > 0 ? {
-                    price: maxBidPrice,
-                    size: maxBidVolume,
-                    distancePercent: ((maxBidPrice - result.currentPrice) / result.currentPrice) * 100
-                } : null;
-                const askCandidate = maxAskVolume > 0 ? {
-                    price: maxAskPrice,
-                    size: maxAskVolume,
-                    distancePercent: ((maxAskPrice - result.currentPrice) / result.currentPrice) * 100
-                } : null;
-                if (maxBidVolume >= threshold) {
-                    result.bidDensity = bidCandidate;
-                }
-                if (maxAskVolume >= threshold) {
-                    result.askDensity = askCandidate;
-                }
-                // Fallback: если порог не достигнут, все равно показываем максимальные скопления
-                if (!result.bidDensity && bidCandidate) result.bidDensity = bidCandidate;
-                if (!result.askDensity && askCandidate) result.askDensity = askCandidate;
+                const minPrice = result.currentPrice * (1 - this.densityRangePct / 100);
+                const maxPrice = result.currentPrice * (1 + this.densityRangePct / 100);
+                const bidsInRange = bids.filter(([p]) => {
+                    const price = parseFloat(p);
+                    return Number.isFinite(price) && price >= minPrice && price <= result.currentPrice;
+                });
+                const asksInRange = asks.filter(([p]) => {
+                    const price = parseFloat(p);
+                    return Number.isFinite(price) && price <= maxPrice && price >= result.currentPrice;
+                });
+                result.bidDensity = pickAnomaly(bidsInRange, 'bid', result.currentPrice);
+                result.askDensity = pickAnomaly(asksInRange, 'ask', result.currentPrice);
             }
             return result;
         } catch (error) {
@@ -3076,50 +3041,33 @@ class CandlestickChart {
             ? this.densityData.currentPrice
             : this.candles[this.candles.length - 1]?.close;
         if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
-        const sizeType = this.valuesConfig?.density?.sizeType || 'large';
-        const dailyVolume = Number.isFinite(this.densityData.dailyVolume) ? this.densityData.dailyVolume : null;
-        const matchDensitySize = (size) => {
-            if (!dailyVolume || !Number.isFinite(size) || size <= 0) return true;
-            const pct = (size / dailyVolume) * 100;
-            if (sizeType === 'small') return pct < 1;
-            if (sizeType === 'medium') return pct >= 1 && pct < 2;
-            return pct >= 2; // large
-        };
-        const isTrueDensity = (side, price, size) => {
-            if (!Number.isFinite(price) || !Number.isFinite(size) || size <= 0) return false;
-            if (side === 'ask') return price > currentPrice;
-            if (side === 'bid') return price < currentPrice;
-            return false;
-        };
         const levels = [];
         if (this.densityData.askDensity?.price != null &&
-            isTrueDensity('ask', this.densityData.askDensity.price, this.densityData.askDensity.size) &&
-            matchDensitySize(this.densityData.askDensity.size)) {
+            Number.isFinite(this.densityData.askDensity.price) &&
+            Number.isFinite(this.densityData.askDensity.size) &&
+            this.densityData.askDensity.size > 0) {
             levels.push({ side: 'ask', price: this.densityData.askDensity.price, size: this.densityData.askDensity.size });
         }
         if (this.densityData.bidDensity?.price != null &&
-            isTrueDensity('bid', this.densityData.bidDensity.price, this.densityData.bidDensity.size) &&
-            matchDensitySize(this.densityData.bidDensity.size)) {
+            Number.isFinite(this.densityData.bidDensity.price) &&
+            Number.isFinite(this.densityData.bidDensity.size) &&
+            this.densityData.bidDensity.size > 0) {
             levels.push({ side: 'bid', price: this.densityData.bidDensity.price, size: this.densityData.bidDensity.size });
         }
         if (levels.length === 0) return;
         const mmEnabled = !!this.valuesConfig?.density?.mmEnabled;
-        if (mmEnabled) {
-            const ask = levels.find(l => l.side === 'ask');
-            const bid = levels.find(l => l.side === 'bid');
-            if (!ask || !bid) return; // маркет-мейкер плотность должна быть парной
-            const askDistPct = Math.abs((ask.price - currentPrice) / currentPrice) * 100;
-            const bidDistPct = Math.abs((currentPrice - bid.price) / currentPrice) * 100;
-            const distDiff = Math.abs(askDistPct - bidDistPct);
-            // Равноудаленность сверху/снизу от текущей цены в пределах допуска
-            if (distDiff > this.mmDensityTolerancePct) return;
-        }
-        if (levels.length >= 2) {
-            const p1 = levels[0].price;
-            const p2 = levels[1].price;
-            const base = ((p1 + p2) / 2) || 1;
-            const diffPct = Math.abs(p1 - p2) / base * 100;
-            if (!mmEnabled && diffPct >= 0.1 && diffPct <= 0.5) return;
+        const askLevel = levels.find(l => l.side === 'ask');
+        const bidLevel = levels.find(l => l.side === 'bid');
+        if (!mmEnabled && askLevel && bidLevel) {
+            const askDistPct = Math.abs((askLevel.price - currentPrice) / currentPrice) * 100;
+            const bidDistPct = Math.abs((currentPrice - bidLevel.price) / currentPrice) * 100;
+            const distanceDiff = Math.abs(askDistPct - bidDistPct);
+            const maxSize = Math.max(askLevel.size, bidLevel.size);
+            const volumeDiffRatio = maxSize > 0 ? Math.abs(askLevel.size - bidLevel.size) / maxSize : 1;
+            // MM: близкие расстояния и близкие объемы сверху/снизу
+            if (distanceDiff <= this.mmDensityTolerancePct && volumeDiffRatio <= this.mmVolumeToleranceRatio) {
+                return;
+            }
         }
 
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
@@ -3575,7 +3523,9 @@ function setupValuesModal(chart) {
     function saveFromModal() {
         const sizeType = densitySize?.value || 'large';
         const thresholdMap = { large: 2, medium: 1, small: 0.5 };
+        const anomalyMap = { large: 10, medium: 7, small: 4 };
         chart.densityVolumePercentage = thresholdMap[sizeType] ?? 2;
+        chart.densityAnomalyMultiplier = anomalyMap[sizeType] ?? 10;
         chart.valuesConfig = {
             density: {
                 enabled: !!densityPanelCheckbox?.checked,
@@ -3601,6 +3551,7 @@ function setupValuesModal(chart) {
         syncCheckboxes();
         chart.valuesConfig = { density: { enabled: false, color: '#ff5252', sizeType: 'large', mmEnabled: false } };
         chart.densityVolumePercentage = 2;
+        chart.densityAnomalyMultiplier = 10;
         chart.stopDensityUpdates();
         chart.densityData = null;
         chart.draw();
