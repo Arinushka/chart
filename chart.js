@@ -100,7 +100,7 @@ class CandlestickChart {
             subCci: null, subStochRsi: null, subWr: null, subDmi: null, subMtm: null, subEmv: null
         };
         this.valuesConfig = {
-            density: { enabled: false, color: '#ff5252' }
+            density: { enabled: false, color: '#ff5252', sizeType: 'large', mmEnabled: false }
         };
         this.levelsConfig = {
             support: { enabled: false, color: '#00bcd4' },
@@ -110,6 +110,7 @@ class CandlestickChart {
         this.densityVolumePercentage = 2; // Порог плотности, % от суточного объема
         this.densityDepth = 500; // Глубина стакана
         this.densityUpdateTimer = null;
+        this.mmDensityTolerancePct = 0.2; // допустимая разница между % дистанциями bid/ask
         
         // Bind resize
         window.addEventListener('resize', () => this.resize());
@@ -3071,14 +3072,55 @@ class CandlestickChart {
 
     drawDensityValues() {
         if (!this.valuesConfig?.density?.enabled || !this.densityData) return;
+        const currentPrice = Number.isFinite(this.densityData.currentPrice)
+            ? this.densityData.currentPrice
+            : this.candles[this.candles.length - 1]?.close;
+        if (!Number.isFinite(currentPrice) || currentPrice <= 0) return;
+        const sizeType = this.valuesConfig?.density?.sizeType || 'large';
+        const dailyVolume = Number.isFinite(this.densityData.dailyVolume) ? this.densityData.dailyVolume : null;
+        const matchDensitySize = (size) => {
+            if (!dailyVolume || !Number.isFinite(size) || size <= 0) return true;
+            const pct = (size / dailyVolume) * 100;
+            if (sizeType === 'small') return pct < 1;
+            if (sizeType === 'medium') return pct >= 1 && pct < 2;
+            return pct >= 2; // large
+        };
+        const isTrueDensity = (side, price, size) => {
+            if (!Number.isFinite(price) || !Number.isFinite(size) || size <= 0) return false;
+            if (side === 'ask') return price > currentPrice;
+            if (side === 'bid') return price < currentPrice;
+            return false;
+        };
         const levels = [];
-        if (this.densityData.askDensity?.price != null) {
+        if (this.densityData.askDensity?.price != null &&
+            isTrueDensity('ask', this.densityData.askDensity.price, this.densityData.askDensity.size) &&
+            matchDensitySize(this.densityData.askDensity.size)) {
             levels.push({ side: 'ask', price: this.densityData.askDensity.price, size: this.densityData.askDensity.size });
         }
-        if (this.densityData.bidDensity?.price != null) {
+        if (this.densityData.bidDensity?.price != null &&
+            isTrueDensity('bid', this.densityData.bidDensity.price, this.densityData.bidDensity.size) &&
+            matchDensitySize(this.densityData.bidDensity.size)) {
             levels.push({ side: 'bid', price: this.densityData.bidDensity.price, size: this.densityData.bidDensity.size });
         }
         if (levels.length === 0) return;
+        const mmEnabled = !!this.valuesConfig?.density?.mmEnabled;
+        if (mmEnabled) {
+            const ask = levels.find(l => l.side === 'ask');
+            const bid = levels.find(l => l.side === 'bid');
+            if (!ask || !bid) return; // маркет-мейкер плотность должна быть парной
+            const askDistPct = Math.abs((ask.price - currentPrice) / currentPrice) * 100;
+            const bidDistPct = Math.abs((currentPrice - bid.price) / currentPrice) * 100;
+            const distDiff = Math.abs(askDistPct - bidDistPct);
+            // Равноудаленность сверху/снизу от текущей цены в пределах допуска
+            if (distDiff > this.mmDensityTolerancePct) return;
+        }
+        if (levels.length >= 2) {
+            const p1 = levels[0].price;
+            const p2 = levels[1].price;
+            const base = ((p1 + p2) / 2) || 1;
+            const diffPct = Math.abs(p1 - p2) / base * 100;
+            if (!mmEnabled && diffPct >= 0.1 && diffPct <= 0.5) return;
+        }
 
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
         const minX = Math.ceil(this.padding.left);
@@ -3499,6 +3541,8 @@ function setupValuesModal(chart) {
     const densityItem = modal.querySelector('.values-item[data-value="density"]');
     const densityListCheckbox = document.getElementById('valueDensityEn');
     const densityPanelCheckbox = document.getElementById('valueDensityPanelEn');
+    const densitySize = document.getElementById('valueDensitySize');
+    const densityMmCheckbox = document.getElementById('valueDensityMmEn');
     const densityColor = document.getElementById('valueDensityColor');
 
     function syncCheckboxes() {
@@ -3509,6 +3553,8 @@ function setupValuesModal(chart) {
     function syncFromChart() {
         const cfg = chart.valuesConfig || {};
         if (densityPanelCheckbox) densityPanelCheckbox.checked = !!cfg.density?.enabled;
+        if (densitySize) densitySize.value = cfg.density?.sizeType || 'large';
+        if (densityMmCheckbox) densityMmCheckbox.checked = !!cfg.density?.mmEnabled;
         if (densityColor) densityColor.value = cfg.density?.color || '#ff5252';
         syncCheckboxes();
         densityItem?.classList.add('selected');
@@ -3527,10 +3573,15 @@ function setupValuesModal(chart) {
     }
 
     function saveFromModal() {
+        const sizeType = densitySize?.value || 'large';
+        const thresholdMap = { large: 2, medium: 1, small: 0.5 };
+        chart.densityVolumePercentage = thresholdMap[sizeType] ?? 2;
         chart.valuesConfig = {
             density: {
                 enabled: !!densityPanelCheckbox?.checked,
-                color: densityColor?.value || '#ff5252'
+                color: densityColor?.value || '#ff5252',
+                sizeType,
+                mmEnabled: !!densityMmCheckbox?.checked
             }
         };
         if (chart.valuesConfig.density.enabled) chart.startDensityUpdates();
@@ -3544,9 +3595,12 @@ function setupValuesModal(chart) {
 
     function resetModal() {
         if (densityPanelCheckbox) densityPanelCheckbox.checked = false;
+        if (densitySize) densitySize.value = 'large';
+        if (densityMmCheckbox) densityMmCheckbox.checked = false;
         if (densityColor) densityColor.value = '#ff5252';
         syncCheckboxes();
-        chart.valuesConfig = { density: { enabled: false, color: '#ff5252' } };
+        chart.valuesConfig = { density: { enabled: false, color: '#ff5252', sizeType: 'large', mmEnabled: false } };
+        chart.densityVolumePercentage = 2;
         chart.stopDensityUpdates();
         chart.densityData = null;
         chart.draw();
