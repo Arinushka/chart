@@ -33,6 +33,8 @@
                 </div>
             </div>
             <div class="chart-tools">
+                <button class="chart-tool-btn levels-icon-btn" title="Уровни" id="levelsBtn"><span class="levels-icon">↕</span></button>
+                <button class="chart-tool-btn values-icon-btn" title="Значения" id="valuesBtn"><span class="values-icon">〰</span></button>
                 <button class="chart-tool-btn indicators-icon-btn" title="Индикаторы" id="indicatorsBtn"><span class="indicators-icon">📈</span></button>
             </div>
             <div class="timeframe-buttons">
@@ -507,6 +509,92 @@
                 <div class="indicators-modal-footer">
                     <button class="indicators-btn indicators-reset" id="indicatorsReset">Сброс</button>
                     <button class="indicators-btn indicators-save" id="indicatorsSave">Сохранить</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Values Modal -->
+        <div class="indicators-modal" id="valuesModal">
+            <div class="indicators-modal-content">
+                <button class="indicators-modal-close" id="valuesModalClose">×</button>
+                <div class="indicators-modal-tabs">
+                    <button class="indicators-tab active" type="button">Значения</button>
+                </div>
+                <div class="indicators-modal-body">
+                    <div class="indicators-list">
+                        <div class="indicators-list-title">Values</div>
+                        <label class="indicator-item values-item selected" data-value="density">
+                            <input type="checkbox" id="valueDensityEn">
+                            Плотности
+                        </label>
+                    </div>
+                    <div class="indicators-config" id="valuesConfig">
+                        <div class="indicators-config-title" id="valuesConfigTitle">Плотности</div>
+                        <div class="indicator-config-panel values-config-panel" id="valueDensityConfig">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="valueDensityPanelEn">
+                                <label for="valueDensityPanelEn">Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label for="valueDensityColor">Цвет</label>
+                                <input type="color" id="valueDensityColor" value="#ff5252">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="indicators-modal-footer">
+                    <button class="indicators-btn indicators-reset" id="valuesReset">Сброс</button>
+                    <button class="indicators-btn indicators-save" id="valuesSave">Сохранить</button>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Levels Modal -->
+        <div class="indicators-modal" id="levelsModal">
+            <div class="indicators-modal-content">
+                <button class="indicators-modal-close" id="levelsModalClose">×</button>
+                <div class="indicators-modal-tabs">
+                    <button class="indicators-tab active" type="button">Уровни</button>
+                </div>
+                <div class="indicators-modal-body">
+                    <div class="indicators-list">
+                        <div class="indicators-list-title">Levels</div>
+                        <label class="indicator-item levels-item selected" data-level="support">
+                            <input type="checkbox" id="levelSupportEn">
+                            Поддержки
+                        </label>
+                        <label class="indicator-item levels-item" data-level="resistance">
+                            <input type="checkbox" id="levelResistanceEn">
+                            Сопротивления
+                        </label>
+                    </div>
+                    <div class="indicators-config" id="levelsConfig">
+                        <div class="indicators-config-title" id="levelsConfigTitle">Поддержки</div>
+                        <div class="indicator-config-panel levels-config-panel" id="levelSupportConfig">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="levelSupportPanelEn">
+                                <label for="levelSupportPanelEn">Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label for="levelSupportColor">Цвет</label>
+                                <input type="color" id="levelSupportColor" value="#00bcd4">
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel levels-config-panel" id="levelResistanceConfig" style="display:none;">
+                            <div class="indicator-param-row">
+                                <input type="checkbox" id="levelResistancePanelEn">
+                                <label for="levelResistancePanelEn">Включить</label>
+                            </div>
+                            <div class="indicator-param-row">
+                                <label for="levelResistanceColor">Цвет</label>
+                                <input type="color" id="levelResistanceColor" value="#ff5252">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div class="indicators-modal-footer">
+                    <button class="indicators-btn indicators-reset" id="levelsReset">Сброс</button>
+                    <button class="indicators-btn indicators-save" id="levelsSave">Сохранить</button>
                 </div>
             </div>
         </div>

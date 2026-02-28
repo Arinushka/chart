@@ -29,6 +29,7 @@ class CandlestickChart {
         this.candles = [];
         this.volumeData = [];
         this.symbol = 'BTCUSDT'; // Default symbol
+        this.market = 'spot'; // spot | futures
         this.interval = '1d'; // Default interval (1 day)
         this.exchangeName = 'Binance'; // Биржа — источник данных
         this.ws = null; // WebSocket connection
@@ -38,6 +39,7 @@ class CandlestickChart {
         // Drawing mode state
         this.drawingMode = false;
         this.horizontalLineMode = false;
+        this.alertMode = false; // Alert: один клик — прерывистый луч от точки до конца графика
         this.rectangleMode = false;
         this.rulerMode = false;
         this.drawnLines = []; // Array to store drawn lines (brush tool)
@@ -97,6 +99,17 @@ class CandlestickChart {
             subMacd: null, subRsi: null, subMfi: null, subKdj: null, subObv: null,
             subCci: null, subStochRsi: null, subWr: null, subDmi: null, subMtm: null, subEmv: null
         };
+        this.valuesConfig = {
+            density: { enabled: false, color: '#ff5252' }
+        };
+        this.levelsConfig = {
+            support: { enabled: false, color: '#00bcd4' },
+            resistance: { enabled: false, color: '#ff5252' }
+        };
+        this.densityData = null; // { currentPrice, bidDensity, askDensity, dailyVolume }
+        this.densityVolumePercentage = 2; // Порог плотности, % от суточного объема
+        this.densityDepth = 500; // Глубина стакана
+        this.densityUpdateTimer = null;
         
         // Bind resize
         window.addEventListener('resize', () => this.resize());
@@ -380,6 +393,19 @@ class CandlestickChart {
                 return;
             }
             
+            // Handle alert mode: прерывистый луч от точки клика до конца графика
+            if (this.alertMode) {
+                this.horizontalLines.push({
+                    time1: this.xToTime(x),
+                    price: this.yToPrice(y),
+                    alert: true
+                });
+                this.draw();
+                this.setAlertMode(false);
+                document.querySelector('.tool-btn[title="Alert"]')?.classList.remove('active');
+                return;
+            }
+            
             // Handle rectangle mode
             if (this.rectangleMode) {
                 if (!this.currentRectangle) {
@@ -455,7 +481,7 @@ class CandlestickChart {
         
         // Mouse down: в области осей (слева/снизу) — масштабирование по осям; в области графика — панорамирование
         this.canvas.addEventListener('mousedown', (e) => {
-            if (!this.drawingMode && !this.horizontalLineMode && 
+            if (!this.drawingMode && !this.horizontalLineMode && !this.alertMode &&
                 !this.rectangleMode && !this.rulerMode) {
                 const rect = this.canvas.getBoundingClientRect();
                 const x = e.clientX - rect.left;
@@ -569,7 +595,7 @@ class CandlestickChart {
             const y = e.clientY - rect.top;
             const isOnCanvas = x >= 0 && x <= this.logicalWidth && y >= 0 && y <= this.logicalHeight;
             
-            if (this.drawingMode || this.horizontalLineMode || this.rectangleMode || this.rulerMode) {
+            if (this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode) {
                 this.canvas.style.cursor = 'crosshair';
             } else if (this.isZoomDragging) {
                 this.canvas.style.cursor = 'grabbing';
@@ -589,22 +615,22 @@ class CandlestickChart {
             this.currentLine = null;
             this.tempPoint = null;
         }
-        // Deactivate other modes when brush is activated
         if (enabled) {
             this.horizontalLineMode = false;
+            this.alertMode = false;
             this.rectangleMode = false;
             this.rulerMode = false;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
         }
-        this.canvas.style.cursor = (enabled || this.horizontalLineMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
     }
     
     setHorizontalLineMode(enabled) {
         this.horizontalLineMode = enabled;
-        // Deactivate other modes when horizontal line is activated
         if (enabled) {
             this.drawingMode = false;
+            this.alertMode = false;
             this.rectangleMode = false;
             this.rulerMode = false;
             this.currentLine = null;
@@ -612,37 +638,52 @@ class CandlestickChart {
             this.currentRulerSelection = null;
             this.tempPoint = null;
         }
-        this.canvas.style.cursor = enabled ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.alertMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
+    }
+    
+    setAlertMode(enabled) {
+        this.alertMode = enabled;
+        if (enabled) {
+            this.drawingMode = false;
+            this.horizontalLineMode = false;
+            this.rectangleMode = false;
+            this.rulerMode = false;
+            this.currentLine = null;
+            this.currentRectangle = null;
+            this.currentRulerSelection = null;
+            this.tempPoint = null;
+        }
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
     }
     
     setRectangleMode(enabled) {
         this.rectangleMode = enabled;
-        // Deactivate other modes when rectangle is activated
         if (enabled) {
             this.drawingMode = false;
             this.horizontalLineMode = false;
+            this.alertMode = false;
             this.rulerMode = false;
             this.currentLine = null;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
             this.tempPoint = null;
         }
-        this.canvas.style.cursor = enabled ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.alertMode || this.rulerMode) ? 'crosshair' : 'default';
     }
     
     setRulerMode(enabled) {
         this.rulerMode = enabled;
-        // Deactivate other modes when ruler is activated
         if (enabled) {
             this.drawingMode = false;
             this.horizontalLineMode = false;
+            this.alertMode = false;
             this.rectangleMode = false;
             this.currentLine = null;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
             this.tempPoint = null;
         }
-        this.canvas.style.cursor = enabled ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode) ? 'crosshair' : 'default';
     }
     
     calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice) {
@@ -1927,12 +1968,14 @@ class CandlestickChart {
         
         this.ctx.setLineDash([]);
         
-        // Draw horizontal rays
+        // Draw horizontal rays (обычные и alert — прерывистый луч)
         if (hasHorizontalLines) {
             this.horizontalLines.forEach((line, index) => {
                 const selected = this.selectedDrawing?.type === 'ray' && this.selectedDrawing?.index === index;
-                this.ctx.strokeStyle = selected ? '#ffa726' : '#4a9eff';
+                const isAlert = !!line.alert;
+                this.ctx.strokeStyle = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
                 this.ctx.lineWidth = selected ? 4 : 2;
+                if (isAlert) this.ctx.setLineDash([8, 4]);
                 let x1, y1, x2, y2;
                 if (line.time1 != null && line.price != null) {
                     x1 = this.timeToX(line.time1);
@@ -1948,8 +1991,9 @@ class CandlestickChart {
                     this.ctx.moveTo(clipped.x1, clipped.y1);
                     this.ctx.lineTo(clipped.x2, clipped.y2);
                     this.ctx.stroke();
+                    if (isAlert) this.ctx.setLineDash([]);
                     if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
-                        this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
+                        this.ctx.fillStyle = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
                         this.ctx.beginPath();
                         this.ctx.arc(x1, y1, selected ? 5 : 4, 0, Math.PI * 2);
                         this.ctx.fill();
@@ -2827,6 +2871,363 @@ class CandlestickChart {
             subBandBottom -= subBandH;
         });
     }
+
+    processOrderBookData(data, dailyVolume, volumePercentage, exchange, market) {
+        const threshold = dailyVolume * (volumePercentage / 100);
+        const result = {
+            dailyVolume: dailyVolume,
+            currentPrice: null,
+            bidDensity: null,
+            askDensity: null
+        };
+        try {
+            if (exchange === 'binance') {
+                if (!data?.bids || !data?.asks) return null;
+                const bestBid = parseFloat(data.bids[0][0]);
+                const bestAsk = parseFloat(data.asks[0][0]);
+                result.currentPrice = (bestBid + bestAsk) / 2;
+                let maxBidVolume = 0;
+                let maxBidPrice = 0;
+                let currentBidVolume = 0;
+                for (const [priceStr, amountStr] of data.bids) {
+                    const price = parseFloat(priceStr);
+                    const amount = parseFloat(amountStr);
+                    currentBidVolume += price * amount;
+                    if (currentBidVolume > maxBidVolume) {
+                        maxBidVolume = currentBidVolume;
+                        maxBidPrice = price;
+                    }
+                }
+                let maxAskVolume = 0;
+                let maxAskPrice = 0;
+                let currentAskVolume = 0;
+                for (const [priceStr, amountStr] of data.asks) {
+                    const price = parseFloat(priceStr);
+                    const amount = parseFloat(amountStr);
+                    currentAskVolume += price * amount;
+                    if (currentAskVolume > maxAskVolume) {
+                        maxAskVolume = currentAskVolume;
+                        maxAskPrice = price;
+                    }
+                }
+                const bidCandidate = maxBidVolume > 0 ? {
+                    price: maxBidPrice,
+                    size: maxBidVolume,
+                    distancePercent: ((maxBidPrice - result.currentPrice) / result.currentPrice) * 100
+                } : null;
+                const askCandidate = maxAskVolume > 0 ? {
+                    price: maxAskPrice,
+                    size: maxAskVolume,
+                    distancePercent: ((maxAskPrice - result.currentPrice) / result.currentPrice) * 100
+                } : null;
+                if (maxBidVolume >= threshold) {
+                    result.bidDensity = bidCandidate;
+                }
+                if (maxAskVolume >= threshold) {
+                    result.askDensity = askCandidate;
+                }
+                // Fallback: если порог не достигнут, все равно показываем максимальные скопления
+                if (!result.bidDensity && bidCandidate) result.bidDensity = bidCandidate;
+                if (!result.askDensity && askCandidate) result.askDensity = askCandidate;
+            } else if (exchange === 'bybit') {
+                if (!data?.result || Number(data?.retCode) !== 0) return null;
+                const bids = data.result.b || [];
+                const asks = data.result.a || [];
+                if (bids.length === 0 || asks.length === 0) return null;
+                const bestBid = parseFloat(bids[0][0]);
+                const bestAsk = parseFloat(asks[0][0]);
+                result.currentPrice = (bestBid + bestAsk) / 2;
+                let maxBidVolume = 0;
+                let maxBidPrice = 0;
+                let currentBidVolume = 0;
+                for (const [priceStr, amountStr] of bids) {
+                    const price = parseFloat(priceStr);
+                    const amount = parseFloat(amountStr);
+                    currentBidVolume += price * amount;
+                    if (currentBidVolume > maxBidVolume) {
+                        maxBidVolume = currentBidVolume;
+                        maxBidPrice = price;
+                    }
+                }
+                let maxAskVolume = 0;
+                let maxAskPrice = 0;
+                let currentAskVolume = 0;
+                for (const [priceStr, amountStr] of asks) {
+                    const price = parseFloat(priceStr);
+                    const amount = parseFloat(amountStr);
+                    currentAskVolume += price * amount;
+                    if (currentAskVolume > maxAskVolume) {
+                        maxAskVolume = currentAskVolume;
+                        maxAskPrice = price;
+                    }
+                }
+                const bidCandidate = maxBidVolume > 0 ? {
+                    price: maxBidPrice,
+                    size: maxBidVolume,
+                    distancePercent: ((maxBidPrice - result.currentPrice) / result.currentPrice) * 100
+                } : null;
+                const askCandidate = maxAskVolume > 0 ? {
+                    price: maxAskPrice,
+                    size: maxAskVolume,
+                    distancePercent: ((maxAskPrice - result.currentPrice) / result.currentPrice) * 100
+                } : null;
+                if (maxBidVolume >= threshold) {
+                    result.bidDensity = bidCandidate;
+                }
+                if (maxAskVolume >= threshold) {
+                    result.askDensity = askCandidate;
+                }
+                // Fallback: если порог не достигнут, все равно показываем максимальные скопления
+                if (!result.bidDensity && bidCandidate) result.bidDensity = bidCandidate;
+                if (!result.askDensity && askCandidate) result.askDensity = askCandidate;
+            }
+            return result;
+        } catch (error) {
+            console.error('Error processing order book:', error);
+            return null;
+        }
+    }
+
+    async fetchDailyVolumeQuote(exchange, ticker, market) {
+        try {
+            if (exchange === 'binance') {
+                const endpoint = market === 'futures'
+                    ? `https://fapi.binance.com/fapi/v1/ticker/24hr?symbol=${ticker}`
+                    : `https://api.binance.com/api/v3/ticker/24hr?symbol=${ticker}`;
+                const r = await fetch(endpoint);
+                const d = await r.json();
+                const quote = parseFloat(d?.quoteVolume);
+                return Number.isFinite(quote) ? quote : null;
+            }
+            if (exchange === 'bybit') {
+                const category = market === 'futures' ? 'linear' : 'spot';
+                const endpoint = `https://api.bybit.com/v5/market/tickers?category=${category}&symbol=${ticker}`;
+                const r = await fetch(endpoint);
+                const d = await r.json();
+                const item = d?.result?.list?.[0];
+                const turnover = parseFloat(item?.turnover24h);
+                return Number.isFinite(turnover) ? turnover : null;
+            }
+            return null;
+        } catch {
+            return null;
+        }
+    }
+
+    async updateDensityData() {
+        const enabled = !!this.valuesConfig?.density?.enabled;
+        if (!enabled) {
+            this.densityData = null;
+            return;
+        }
+        const ticker = (this.symbol || 'BTCUSDT').toUpperCase();
+        const market = this.market || 'spot';
+        const exchange = (this.exchangeName || 'Binance').toLowerCase().includes('bybit') ? 'bybit' : 'binance';
+        const dailyVolume = await this.fetchDailyVolumeQuote(exchange, ticker, market);
+        if (!dailyVolume || dailyVolume <= 0) {
+            this.densityData = null;
+            this.draw();
+            return;
+        }
+        try {
+            let endpoint = '';
+            if (exchange === 'binance') {
+                endpoint = market === 'futures'
+                    ? `https://fapi.binance.com/fapi/v1/depth?symbol=${ticker}&limit=${this.densityDepth}`
+                    : `https://api.binance.com/api/v3/depth?symbol=${ticker}&limit=${this.densityDepth}`;
+            } else {
+                const category = market === 'futures' ? 'linear' : 'spot';
+                endpoint = `https://api.bybit.com/v5/market/orderbook?category=${category}&limit=${this.densityDepth}&symbol=${ticker}`;
+            }
+            const response = await fetch(endpoint);
+            const data = await response.json();
+            this.densityData = this.processOrderBookData(
+                data,
+                dailyVolume,
+                this.densityVolumePercentage,
+                exchange,
+                market
+            );
+        } catch (error) {
+            console.error('Error fetching density data:', error);
+            this.densityData = null;
+        }
+        this.draw();
+    }
+
+    startDensityUpdates() {
+        if (this.densityUpdateTimer) clearInterval(this.densityUpdateTimer);
+        if (!this.valuesConfig?.density?.enabled) return;
+        this.updateDensityData();
+        this.densityUpdateTimer = setInterval(() => this.updateDensityData(), 15000);
+    }
+
+    stopDensityUpdates() {
+        if (this.densityUpdateTimer) {
+            clearInterval(this.densityUpdateTimer);
+            this.densityUpdateTimer = null;
+        }
+    }
+
+    drawDensityValues() {
+        if (!this.valuesConfig?.density?.enabled || !this.densityData) return;
+        const levels = [];
+        if (this.densityData.askDensity?.price != null) {
+            levels.push({ side: 'ask', price: this.densityData.askDensity.price, size: this.densityData.askDensity.size });
+        }
+        if (this.densityData.bidDensity?.price != null) {
+            levels.push({ side: 'bid', price: this.densityData.bidDensity.price, size: this.densityData.bidDensity.size });
+        }
+        if (levels.length === 0) return;
+
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = Math.ceil(this.padding.left);
+        const minY = Math.ceil(this.padding.top);
+        const maxX = Math.floor(this.logicalWidth - this.padding.right);
+        const maxY = Math.floor(this.padding.top + chartAreaHeight);
+        const anchorX = Math.max(minX, Math.min(maxX, this.timeToX(this.endTime)));
+
+        const formatSize = (n) => {
+            if (!Number.isFinite(n)) return '0';
+            if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
+            if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, '') + 'M';
+            if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
+            return n.toFixed(0);
+        };
+
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
+        this.ctx.clip();
+        this.ctx.strokeStyle = this.valuesConfig?.density?.color || '#ff5252';
+        this.ctx.lineWidth = 1.5;
+        this.ctx.setLineDash([7, 5]);
+        for (const level of levels) {
+            const y = this.priceToY(level.price);
+            if (y < minY || y > maxY) continue;
+            this.ctx.beginPath();
+            this.ctx.moveTo(anchorX, y);
+            this.ctx.lineTo(maxX, y);
+            this.ctx.stroke();
+            this.ctx.setLineDash([]);
+            this.ctx.fillStyle = this.valuesConfig?.density?.color || '#ff5252';
+            this.ctx.beginPath();
+            this.ctx.arc(anchorX, y, 2.2, 0, Math.PI * 2);
+            this.ctx.fill();
+            this.ctx.setLineDash([7, 5]);
+        }
+        this.ctx.restore();
+
+        // Label boxes on the right (like screenshot)
+        this.ctx.save();
+        this.ctx.font = '12px sans-serif';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'middle';
+        for (const level of levels) {
+            const y = this.priceToY(level.price);
+            if (y < minY || y > maxY) continue;
+            const sideTag = level.side === 'ask' ? 'BY-F' : 'OK-S';
+            const text = `${sideTag} ${formatSize(level.size)} ${this.formatPrice(level.price)}`;
+            const padX = 6;
+            const boxH = 18;
+            const textW = this.ctx.measureText(text).width;
+            const boxW = textW + padX * 2;
+            const boxX = Math.min(maxX + 6, this.logicalWidth - boxW - 6);
+            const boxY = y - boxH / 2;
+            this.ctx.fillStyle = 'rgba(33, 20, 20, 0.92)';
+            this.ctx.strokeStyle = this.valuesConfig?.density?.color || '#ff5252';
+            this.ctx.lineWidth = 1;
+            this.ctx.fillRect(boxX, boxY, boxW, boxH);
+            this.ctx.strokeRect(boxX, boxY, boxW, boxH);
+            this.ctx.fillStyle = '#e0d8d8';
+            this.ctx.fillText(text, boxX + padX, y);
+        }
+        this.ctx.restore();
+    }
+
+    calculateSupportResistanceLevels() {
+        if (!Array.isArray(this.candles) || this.candles.length === 0) {
+            return { supports: [], resistances: [], currentPrice: null };
+        }
+        const currentPrice = this.candles[this.candles.length - 1]?.close;
+        if (currentPrice == null || Number.isNaN(currentPrice)) {
+            return { supports: [], resistances: [], currentPrice: null };
+        }
+        const lowsSorted = this.candles
+            .map(c => c.low)
+            .filter(v => v != null && !Number.isNaN(v))
+            .sort((a, b) => a - b);
+        const highsSorted = this.candles
+            .map(c => c.high)
+            .filter(v => v != null && !Number.isNaN(v))
+            .sort((a, b) => b - a);
+        let support = null;
+        for (const low of lowsSorted) {
+            if (low < currentPrice) {
+                support = low;
+                break;
+            }
+        }
+        let resistance = null;
+        for (const high of highsSorted) {
+            if (high > currentPrice) {
+                resistance = high;
+                break;
+            }
+        }
+        return {
+            supports: support == null ? [] : [support],
+            resistances: resistance == null ? [] : [resistance],
+            currentPrice
+        };
+    }
+
+    drawSupportResistanceLevels() {
+        const levelsCfg = this.levelsConfig || {};
+        const drawSupport = !!levelsCfg.support?.enabled;
+        const drawResistance = !!levelsCfg.resistance?.enabled;
+        if (!drawSupport && !drawResistance) return;
+        const { supports, resistances } = this.calculateSupportResistanceLevels();
+        if (supports.length === 0 && resistances.length === 0) return;
+
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = Math.ceil(this.padding.left);
+        const minY = Math.ceil(this.padding.top);
+        const maxX = Math.floor(this.logicalWidth - this.padding.right);
+        const maxY = Math.floor(this.padding.top + chartAreaHeight);
+
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
+        this.ctx.clip();
+        this.ctx.lineWidth = 1.5;
+        this.ctx.setLineDash([8, 6]);
+
+        if (drawSupport) {
+            this.ctx.strokeStyle = levelsCfg.support?.color || '#00bcd4';
+            supports.forEach(price => {
+                const y = this.priceToY(price);
+                if (y < minY || y > maxY) return;
+                this.ctx.beginPath();
+                this.ctx.moveTo(minX, y);
+                this.ctx.lineTo(maxX, y);
+                this.ctx.stroke();
+            });
+        }
+        if (drawResistance) {
+            this.ctx.strokeStyle = levelsCfg.resistance?.color || '#ff5252';
+            resistances.forEach(price => {
+                const y = this.priceToY(price);
+                if (y < minY || y > maxY) return;
+                this.ctx.beginPath();
+                this.ctx.moveTo(minX, y);
+                this.ctx.lineTo(maxX, y);
+                this.ctx.stroke();
+            });
+        }
+        this.ctx.setLineDash([]);
+        this.ctx.restore();
+    }
     
     draw() {
         if (!this.ctx || this.logicalWidth === 0 || this.logicalHeight === 0) {
@@ -2850,6 +3251,8 @@ class CandlestickChart {
             // this.drawPriceLevels(); // Removed white dashed lines
             this.drawCandles();
             this.drawIndicators();
+            this.drawSupportResistanceLevels();
+            this.drawDensityValues();
             this.drawVolume();
             if (this.drawingsVisible) {
                 this.drawRulerSelections();
@@ -2902,6 +3305,12 @@ function initChart() {
     // Setup indicators modal
     setupIndicatorsModal(chartInstance);
     
+    // Setup values modal (плотности)
+    setupValuesModal(chartInstance);
+    
+    // Setup levels modal (поддержка/сопротивление)
+    setupLevelsModal(chartInstance);
+    
     // Toggle visibility of drawing tools panel
     setupDrawingToggle();
     
@@ -2928,6 +3337,7 @@ function setupDrawingToggle() {
 function setupTimeframeButtons(chart) {
     const timeframeButtons = document.querySelectorAll('.timeframe-btn');
     const defaultInterval = '1d'; // Default interval (1 day)
+    const intervalsOrder = ['3m', '5m', '15m', '30m', '1h', '2h', '4h', '1d'];
     
     // Set default active button
     timeframeButtons.forEach(btn => {
@@ -2936,19 +3346,224 @@ function setupTimeframeButtons(chart) {
         }
     });
     
+    function setActiveByInterval(interval) {
+        timeframeButtons.forEach(b => {
+            b.classList.toggle('active', b.dataset.interval === interval);
+        });
+    }
+    
+    function switchTimeframeByArrow(direction) {
+        if (!chart) return;
+        const current = (chart.interval || '1d').toLowerCase();
+        const idx = intervalsOrder.indexOf(current);
+        if (idx === -1) return;
+        let nextIdx = direction === 'prev' ? idx - 1 : idx + 1;
+        if (nextIdx < 0) nextIdx = 0;
+        if (nextIdx >= intervalsOrder.length) nextIdx = intervalsOrder.length - 1;
+        const newInterval = intervalsOrder[nextIdx];
+        if (newInterval === current) return;
+        setActiveByInterval(newInterval);
+        chart.changeTimeframe(newInterval);
+    }
+    
     timeframeButtons.forEach(btn => {
         btn.addEventListener('click', () => {
             const interval = btn.dataset.interval;
-            
-            // Update active state
-            timeframeButtons.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            
-            // Reload data with new interval
-            if (chart) {
-                chart.changeTimeframe(interval);
-            }
+            setActiveByInterval(interval);
+            if (chart) chart.changeTimeframe(interval);
         });
+    });
+    
+    // Переключение таймфреймов стрелками влево/вправо
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+        const el = document.activeElement;
+        if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+        e.preventDefault();
+        switchTimeframeByArrow(e.key === 'ArrowLeft' ? 'prev' : 'next');
+    });
+}
+
+function setupLevelsModal(chart) {
+    const modal = document.getElementById('levelsModal');
+    const btn = document.getElementById('levelsBtn');
+    const closeBtn = document.getElementById('levelsModalClose');
+    const saveBtn = document.getElementById('levelsSave');
+    const resetBtn = document.getElementById('levelsReset');
+    const titleEl = document.getElementById('levelsConfigTitle');
+    if (!modal || !btn || !chart) return;
+
+    const supportListItem = modal.querySelector('.levels-item[data-level="support"]');
+    const resistanceListItem = modal.querySelector('.levels-item[data-level="resistance"]');
+    const supportPanel = document.getElementById('levelSupportConfig');
+    const resistancePanel = document.getElementById('levelResistanceConfig');
+    const supportListCheckbox = document.getElementById('levelSupportEn');
+    const resistanceListCheckbox = document.getElementById('levelResistanceEn');
+    const supportPanelCheckbox = document.getElementById('levelSupportPanelEn');
+    const resistancePanelCheckbox = document.getElementById('levelResistancePanelEn');
+    const supportColor = document.getElementById('levelSupportColor');
+    const resistanceColor = document.getElementById('levelResistanceColor');
+
+    function syncCheckboxes() {
+        if (supportListCheckbox) supportListCheckbox.checked = !!supportPanelCheckbox?.checked;
+        if (resistanceListCheckbox) resistanceListCheckbox.checked = !!resistancePanelCheckbox?.checked;
+    }
+
+    function showLevel(level) {
+        const isSupport = level === 'support';
+        if (supportPanel) supportPanel.style.display = isSupport ? '' : 'none';
+        if (resistancePanel) resistancePanel.style.display = isSupport ? 'none' : '';
+        supportListItem?.classList.toggle('selected', isSupport);
+        resistanceListItem?.classList.toggle('selected', !isSupport);
+        if (titleEl) titleEl.textContent = isSupport ? 'Поддержки' : 'Сопротивления';
+    }
+
+    function syncFromChart() {
+        const cfg = chart.levelsConfig || {};
+        if (supportPanelCheckbox) supportPanelCheckbox.checked = !!cfg.support?.enabled;
+        if (resistancePanelCheckbox) resistancePanelCheckbox.checked = !!cfg.resistance?.enabled;
+        if (supportColor) supportColor.value = cfg.support?.color || '#00bcd4';
+        if (resistanceColor) resistanceColor.value = cfg.resistance?.color || '#ff5252';
+        syncCheckboxes();
+        showLevel('support');
+    }
+
+    function closeModal() {
+        modal.classList.remove('open');
+        btn.classList.remove('active');
+    }
+
+    function openModal() {
+        syncFromChart();
+        modal.classList.add('open');
+        btn.classList.add('active');
+    }
+
+    function saveFromModal() {
+        chart.levelsConfig = {
+            support: { enabled: !!supportPanelCheckbox?.checked, color: supportColor?.value || '#00bcd4' },
+            resistance: { enabled: !!resistancePanelCheckbox?.checked, color: resistanceColor?.value || '#ff5252' }
+        };
+        chart.draw();
+        closeModal();
+    }
+
+    function resetModal() {
+        if (supportPanelCheckbox) supportPanelCheckbox.checked = false;
+        if (resistancePanelCheckbox) resistancePanelCheckbox.checked = false;
+        if (supportColor) supportColor.value = '#00bcd4';
+        if (resistanceColor) resistanceColor.value = '#ff5252';
+        syncCheckboxes();
+        chart.levelsConfig = {
+            support: { enabled: false, color: '#00bcd4' },
+            resistance: { enabled: false, color: '#ff5252' }
+        };
+        chart.draw();
+    }
+
+    supportListItem?.addEventListener('click', (e) => {
+        if (e.target instanceof HTMLInputElement && e.target.type === 'checkbox') return;
+        showLevel('support');
+    });
+    resistanceListItem?.addEventListener('click', (e) => {
+        if (e.target instanceof HTMLInputElement && e.target.type === 'checkbox') return;
+        showLevel('resistance');
+    });
+    supportListCheckbox?.addEventListener('change', () => {
+        if (supportPanelCheckbox) supportPanelCheckbox.checked = !!supportListCheckbox.checked;
+    });
+    resistanceListCheckbox?.addEventListener('change', () => {
+        if (resistancePanelCheckbox) resistancePanelCheckbox.checked = !!resistanceListCheckbox.checked;
+    });
+    supportPanelCheckbox?.addEventListener('change', syncCheckboxes);
+    resistancePanelCheckbox?.addEventListener('change', syncCheckboxes);
+
+    btn.addEventListener('click', openModal);
+    closeBtn?.addEventListener('click', closeModal);
+    saveBtn?.addEventListener('click', saveFromModal);
+    resetBtn?.addEventListener('click', resetModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
+}
+
+function setupValuesModal(chart) {
+    const modal = document.getElementById('valuesModal');
+    const btn = document.getElementById('valuesBtn');
+    const closeBtn = document.getElementById('valuesModalClose');
+    const saveBtn = document.getElementById('valuesSave');
+    const resetBtn = document.getElementById('valuesReset');
+    const titleEl = document.getElementById('valuesConfigTitle');
+    if (!modal || !btn || !chart) return;
+
+    const densityItem = modal.querySelector('.values-item[data-value="density"]');
+    const densityListCheckbox = document.getElementById('valueDensityEn');
+    const densityPanelCheckbox = document.getElementById('valueDensityPanelEn');
+    const densityColor = document.getElementById('valueDensityColor');
+
+    function syncCheckboxes() {
+        const enabled = !!densityPanelCheckbox?.checked;
+        if (densityListCheckbox) densityListCheckbox.checked = enabled;
+    }
+
+    function syncFromChart() {
+        const cfg = chart.valuesConfig || {};
+        if (densityPanelCheckbox) densityPanelCheckbox.checked = !!cfg.density?.enabled;
+        if (densityColor) densityColor.value = cfg.density?.color || '#ff5252';
+        syncCheckboxes();
+        densityItem?.classList.add('selected');
+        if (titleEl) titleEl.textContent = 'Плотности';
+    }
+
+    function closeModal() {
+        modal.classList.remove('open');
+        btn.classList.remove('active');
+    }
+
+    function openModal() {
+        syncFromChart();
+        modal.classList.add('open');
+        btn.classList.add('active');
+    }
+
+    function saveFromModal() {
+        chart.valuesConfig = {
+            density: {
+                enabled: !!densityPanelCheckbox?.checked,
+                color: densityColor?.value || '#ff5252'
+            }
+        };
+        if (chart.valuesConfig.density.enabled) chart.startDensityUpdates();
+        else {
+            chart.stopDensityUpdates();
+            chart.densityData = null;
+        }
+        chart.draw();
+        closeModal();
+    }
+
+    function resetModal() {
+        if (densityPanelCheckbox) densityPanelCheckbox.checked = false;
+        if (densityColor) densityColor.value = '#ff5252';
+        syncCheckboxes();
+        chart.valuesConfig = { density: { enabled: false, color: '#ff5252' } };
+        chart.stopDensityUpdates();
+        chart.densityData = null;
+        chart.draw();
+    }
+
+    densityItem?.addEventListener('click', () => densityItem.classList.add('selected'));
+    densityListCheckbox?.addEventListener('change', () => {
+        if (densityPanelCheckbox) densityPanelCheckbox.checked = !!densityListCheckbox.checked;
+    });
+    densityPanelCheckbox?.addEventListener('change', syncCheckboxes);
+
+    btn.addEventListener('click', openModal);
+    closeBtn?.addEventListener('click', closeModal);
+    saveBtn?.addEventListener('click', saveFromModal);
+    resetBtn?.addEventListener('click', resetModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
     });
 }
 
@@ -2958,7 +3573,7 @@ function setupIndicatorsModal(chart) {
     const closeBtn = document.getElementById('indicatorsModalClose');
     const saveBtn = document.getElementById('indicatorsSave');
     const resetBtn = document.getElementById('indicatorsReset');
-    const tabs = document.querySelectorAll('.indicators-tab');
+    const tabs = modal.querySelectorAll('.indicators-tab');
     
     if (!modal || !btn) return;
     
@@ -2975,12 +3590,12 @@ function setupIndicatorsModal(chart) {
     function openModal() {
         modal.classList.add('open');
         syncModalFromChart();
-        const activeTab = document.querySelector('.indicators-tab.active');
+        const activeTab = modal.querySelector('.indicators-tab.active');
         const tabName = activeTab ? activeTab.getAttribute('data-tab') : 'main';
         if (tabName === 'sub') {
             if (mainContent) mainContent.style.display = 'none';
             if (subContent) subContent.style.display = 'flex';
-            const subSelected = document.querySelector('.sub-indicator-item.selected');
+            const subSelected = modal.querySelector('.sub-indicator-item.selected');
             const subId = subSelected ? (subSelected.getAttribute('data-sub') || subSelected.querySelector('input')?.value) : 'VOL';
             subConfig?.querySelectorAll('.sub-indicator-panel').forEach(panel => {
                 panel.style.display = (panel.id === subPanelIds[subId]) ? '' : 'none';
@@ -2989,7 +3604,7 @@ function setupIndicatorsModal(chart) {
         } else {
             if (mainContent) mainContent.style.display = 'flex';
             if (subContent) subContent.style.display = 'none';
-            const selected = document.querySelector('.indicator-item.selected');
+            const selected = modal.querySelector('.indicator-item.selected');
             const id = selected ? (selected.getAttribute('data-indicator') || selected.querySelector('input')?.value) : 'MA';
             mainConfig?.querySelectorAll('.indicator-config-panel').forEach(panel => {
                 if (!panel.classList.contains('sub-indicator-panel')) panel.style.display = (panel.id === panelIds[id]) ? '' : 'none';
@@ -3706,17 +4321,19 @@ function setupIndicatorsModal(chart) {
     const titles = { MA: 'MA - Средняя скользящая', EMA: 'EMA - Экспоненциальная средняя', WMA: 'WMA - Взвешенная средняя', BOLL: 'BOLL - Полосы Боллинджера', VWAP: 'VWAP', MACD: 'MACD - Схождение/расхождение скользящих', RSI: 'RSI - Индекс относительной силы', TRIX: 'TRIX - Тройная экспоненциальная средняя', SUPER: 'SUPER - SuperTrend', SAR: 'SAR - Parabolic SAR' };
     
     function showPanelForIndicator(id) {
-        document.querySelectorAll('.indicator-config-panel').forEach(panel => {
-            panel.style.display = (panel.id === panelIds[id]) ? '' : 'none';
+        mainConfig?.querySelectorAll('.indicator-config-panel').forEach(panel => {
+            if (!panel.classList.contains('sub-indicator-panel')) {
+                panel.style.display = (panel.id === panelIds[id]) ? '' : 'none';
+            }
         });
         const title = document.getElementById('indicatorsConfigTitle');
         if (title) title.textContent = titles[id] || id + ' - Настройки';
     }
     
-    document.querySelectorAll('.indicator-item').forEach(item => {
+    modal.querySelectorAll('.indicator-item[data-indicator]').forEach(item => {
         item.addEventListener('click', (e) => {
             if (e.target.type === 'checkbox') return;
-            document.querySelectorAll('.indicator-item').forEach(i => i.classList.remove('selected'));
+            modal.querySelectorAll('.indicator-item[data-indicator]').forEach(i => i.classList.remove('selected'));
             item.classList.add('selected');
             const id = item.getAttribute('data-indicator') || item.querySelector('input')?.value || 'MA';
             showPanelForIndicator(id);
@@ -3764,25 +4381,45 @@ function setupIndicatorsModal(chart) {
 }
 
 function setupToolButtons(chart) {
+    const alertBtn = document.querySelector('.tool-btn[title="Alert"]');
     const brushBtn = document.querySelector('.tool-btn[title="Brush"]');
     const horizontalLineBtn = document.querySelector('.tool-btn[title="Horizontal Line"]');
     const rectangleBtn = document.querySelector('.tool-btn[title="Rectangle"]');
     const rulerBtn = document.querySelector('.tool-btn[title="Ruler"]');
     const deleteBtn = document.querySelector('.tool-btn[title="Delete"]');
     
+    function deactivateAlert() {
+        if (alertBtn) alertBtn.classList.remove('active');
+        if (chart) chart.setAlertMode?.(false);
+    }
+    
     // Delete button requires double click
     let deleteClickCount = 0;
     let deleteClickTimer = null;
     
+    if (alertBtn) {
+        alertBtn.addEventListener('click', () => {
+            const isActive = chart.alertMode;
+            chart.setAlertMode(!isActive);
+            if (!isActive) {
+                alertBtn.classList.add('active');
+                if (brushBtn) brushBtn.classList.remove('active');
+                if (horizontalLineBtn) horizontalLineBtn.classList.remove('active');
+                if (rectangleBtn) rectangleBtn.classList.remove('active');
+                if (rulerBtn) rulerBtn.classList.remove('active');
+            } else {
+                alertBtn.classList.remove('active');
+            }
+        });
+    }
+    
     if (brushBtn) {
         brushBtn.addEventListener('click', () => {
-            // Toggle drawing mode
             const isActive = chart.drawingMode;
             chart.setDrawingMode(!isActive);
-            
-            // Update button appearance
             if (!isActive) {
                 brushBtn.classList.add('active');
+                deactivateAlert();
                 if (horizontalLineBtn) horizontalLineBtn.classList.remove('active');
                 if (rectangleBtn) rectangleBtn.classList.remove('active');
                 if (rulerBtn) rulerBtn.classList.remove('active');
@@ -3794,14 +4431,12 @@ function setupToolButtons(chart) {
     
     if (horizontalLineBtn) {
         horizontalLineBtn.addEventListener('click', () => {
-            // Toggle horizontal line mode
             const isActive = chart.horizontalLineMode;
             chart.setHorizontalLineMode(!isActive);
-            
-            // Update button appearance
             if (!isActive) {
                 horizontalLineBtn.classList.add('active');
                 if (brushBtn) brushBtn.classList.remove('active');
+                deactivateAlert();
                 if (rectangleBtn) rectangleBtn.classList.remove('active');
                 if (rulerBtn) rulerBtn.classList.remove('active');
             } else {
@@ -3878,6 +4513,10 @@ function setupToolButtons(chart) {
                 if (rulerBtn && chart.rulerMode) {
                     chart.setRulerMode(false);
                     rulerBtn.classList.remove('active');
+                }
+                if (alertBtn && chart.alertMode) {
+                    chart.setAlertMode(false);
+                    alertBtn.classList.remove('active');
                 }
                 
                 // Visual feedback - briefly highlight button

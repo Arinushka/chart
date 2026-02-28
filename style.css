@@ -165,6 +165,18 @@ body {
     letter-spacing: 2px;
 }
 
+.levels-icon-btn .levels-icon {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1;
+}
+
+.values-icon-btn .values-icon {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1;
+}
+
 .timeframe-btn {
     padding: 4px 10px;
     background-color: transparent;
