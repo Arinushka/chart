@@ -3139,6 +3139,7 @@ class CandlestickChart {
         this.ctx.font = '12px sans-serif';
         this.ctx.textAlign = 'left';
         this.ctx.textBaseline = 'middle';
+        const axisStartX = this.logicalWidth - this.padding.right;
         const boxH = 18;
         const labelGapPx = boxH + 2;
         const labelLevels = visibleLevels
@@ -3174,7 +3175,8 @@ class CandlestickChart {
             const padX = 6;
             const textW = this.ctx.measureText(text).width;
             const boxW = textW + padX * 2;
-            const boxX = Math.min(maxX + 6, this.logicalWidth - boxW - 6);
+            // Keep density labels left of the right price axis labels area
+            const boxX = Math.max(minX + 2, axisStartX - boxW - 8);
             const boxY = y - boxH / 2;
             this.ctx.fillStyle = 'rgba(33, 20, 20, 0.92)';
             this.ctx.strokeStyle = this.valuesConfig?.density?.color || '#ff5252';
