@@ -3084,6 +3084,33 @@ class CandlestickChart {
             if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
             return n.toFixed(0);
         };
+        const minGapPx = 6;
+        const visibleLevels = levels
+            .map(level => ({ ...level, y: this.priceToY(level.price) }))
+            .filter(level => Number.isFinite(level.y) && level.y >= minY && level.y <= maxY)
+            .sort((a, b) => a.y - b.y);
+        if (visibleLevels.length > 1) {
+            for (let i = 1; i < visibleLevels.length; i++) {
+                const prev = visibleLevels[i - 1];
+                const curr = visibleLevels[i];
+                if (curr.y - prev.y < minGapPx) {
+                    curr.y = prev.y + minGapPx;
+                }
+            }
+            const overflow = visibleLevels[visibleLevels.length - 1].y - maxY;
+            if (overflow > 0) {
+                for (let i = visibleLevels.length - 1; i >= 0; i--) {
+                    visibleLevels[i].y -= overflow;
+                }
+                if (visibleLevels[0].y < minY) {
+                    const underflow = minY - visibleLevels[0].y;
+                    for (let i = 0; i < visibleLevels.length; i++) {
+                        visibleLevels[i].y += underflow;
+                    }
+                }
+            }
+        }
+        if (visibleLevels.length === 0) return;
 
         this.ctx.save();
         this.ctx.beginPath();
@@ -3092,9 +3119,8 @@ class CandlestickChart {
         this.ctx.strokeStyle = this.valuesConfig?.density?.color || '#ff5252';
         this.ctx.lineWidth = 1.5;
         this.ctx.setLineDash([7, 5]);
-        for (const level of levels) {
-            const y = this.priceToY(level.price);
-            if (y < minY || y > maxY) continue;
+        for (const level of visibleLevels) {
+            const y = level.y;
             this.ctx.beginPath();
             this.ctx.moveTo(anchorX, y);
             this.ctx.lineTo(maxX, y);
@@ -3113,9 +3139,8 @@ class CandlestickChart {
         this.ctx.font = '12px sans-serif';
         this.ctx.textAlign = 'left';
         this.ctx.textBaseline = 'middle';
-        for (const level of levels) {
-            const y = this.priceToY(level.price);
-            if (y < minY || y > maxY) continue;
+        for (const level of visibleLevels) {
+            const y = level.y;
             const sideTag = level.side === 'ask' ? 'BY-F' : 'OK-S';
             const text = `${sideTag} ${formatSize(level.size)} ${this.formatPrice(level.price)}`;
             const padX = 6;
