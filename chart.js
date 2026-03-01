@@ -3139,12 +3139,39 @@ class CandlestickChart {
         this.ctx.font = '12px sans-serif';
         this.ctx.textAlign = 'left';
         this.ctx.textBaseline = 'middle';
-        for (const level of visibleLevels) {
-            const y = level.y;
+        const boxH = 18;
+        const labelGapPx = boxH + 2;
+        const labelLevels = visibleLevels
+            .map(level => ({ ...level, labelY: level.y }))
+            .sort((a, b) => a.labelY - b.labelY);
+        if (labelLevels.length > 1) {
+            for (let i = 1; i < labelLevels.length; i++) {
+                const prev = labelLevels[i - 1];
+                const curr = labelLevels[i];
+                if (curr.labelY - prev.labelY < labelGapPx) {
+                    curr.labelY = prev.labelY + labelGapPx;
+                }
+            }
+            const maxLabelY = maxY - boxH / 2;
+            const minLabelY = minY + boxH / 2;
+            const overflow = labelLevels[labelLevels.length - 1].labelY - maxLabelY;
+            if (overflow > 0) {
+                for (let i = labelLevels.length - 1; i >= 0; i--) {
+                    labelLevels[i].labelY -= overflow;
+                }
+                if (labelLevels[0].labelY < minLabelY) {
+                    const underflow = minLabelY - labelLevels[0].labelY;
+                    for (let i = 0; i < labelLevels.length; i++) {
+                        labelLevels[i].labelY += underflow;
+                    }
+                }
+            }
+        }
+        for (const level of labelLevels) {
+            const y = level.labelY;
             const sideTag = level.side === 'ask' ? 'BY-F' : 'OK-S';
             const text = `${sideTag} ${formatSize(level.size)} ${this.formatPrice(level.price)}`;
             const padX = 6;
-            const boxH = 18;
             const textW = this.ctx.measureText(text).width;
             const boxW = textW + padX * 2;
             const boxX = Math.min(maxX + 6, this.logicalWidth - boxW - 6);
