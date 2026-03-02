@@ -257,22 +257,31 @@ body {
 /* Кнопка «Сбросить масштаб» в правом нижнем углу графика (видна только после масштабирования по осям) */
 .chart-reset-zoom-corner-btn {
     position: absolute;
-    right: 56px;
+    right: 72px;
     bottom: 14px;
     z-index: 100;
-    padding: 6px 12px;
-    font-size: 12px;
+    width: 34px;
+    height: 34px;
+    padding: 0;
     color: #e0e0e0;
     background: #2a2a2a;
     border: 1px solid #444;
-    border-radius: 6px;
+    border-radius: 50%;
     cursor: pointer;
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
 }
 
 .chart-reset-zoom-corner-btn:hover {
     background: #3a3a3a;
     color: #fff;
+}
+
+.chart-reset-zoom-corner-btn svg {
+    width: 18px;
+    height: 18px;
 }
 
 .tool-btn {

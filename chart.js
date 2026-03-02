@@ -52,6 +52,7 @@ class CandlestickChart {
         this.tempPoint = null; // Temporary point for preview
         this.drawingsVisible = true; // Toggle visibility of all drawn elements (lines, rectangles, ruler, etc.)
         this.selectedDrawing = null; // { type: 'line'|'rect'|'ray'|'ruler', index: number } — выделенный элемент для удаления по Delete/Backspace
+        this.draggedDrawing = null; // { type, index, startX, startY, origin }
         
         // Panning state
         this.isPanning = false;
@@ -181,7 +182,9 @@ class CandlestickChart {
         const btn = document.createElement('button');
         btn.type = 'button';
         btn.className = 'chart-reset-zoom-corner-btn';
-        btn.textContent = 'Сбросить масштаб';
+        btn.title = 'Сбросить масштаб';
+        btn.setAttribute('aria-label', 'Сбросить масштаб');
+        btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><polyline points="21 3 21 9 15 9"/></svg>';
         btn.style.display = 'none';
         chartArea.appendChild(btn);
         this.resetZoomBtnEl = btn;
@@ -231,6 +234,12 @@ class CandlestickChart {
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
+
+            if (this.draggedDrawing) {
+                this.applyDrawingDrag(x, y);
+                this.draw();
+                return;
+            }
             
             // Масштабирование сдвигом: по времени — точка под курсором; по цене — центр видимого диапазона.
             if (this.isZoomDragging && this.zoomDragStartVisible) {
@@ -491,6 +500,16 @@ class CandlestickChart {
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
                 if (x < 0 || x > this.logicalWidth || y < 0 || y > this.logicalHeight) return;
+                if (e.button === 0 && this.drawingsVisible) {
+                    const hit = this.hitTestDrawnElements(x, y);
+                    if (hit) {
+                        this.startDrawingDrag(hit, x, y);
+                        this.selectedDrawing = hit;
+                        this.canvas.style.cursor = 'grabbing';
+                        this.draw();
+                        return;
+                    }
+                }
                 const chartAreaHeight = this.chartHeight - this.volumeHeight;
                 // Ось цены — справа (где подписи цен), ось времени — снизу (объём + подписи времени)
                 const inPriceAxis = this.logicalWidth > 0 && x >= this.logicalWidth - this.padding.right;
@@ -536,6 +555,7 @@ class CandlestickChart {
         // Mouse up: отпускание кнопки завершает панорамирование и масштабирование
         this.canvas.addEventListener('mouseup', (e) => {
             if (e.button === 0) {
+                this.draggedDrawing = null;
                 this.isZoomDragging = false;
                 this.isPanning = false;
                 this.canvas.style.cursor = 'default';
@@ -548,6 +568,10 @@ class CandlestickChart {
         
         // Mouse leave handler to stop panning / zoom-by-drag if mouse leaves canvas
         this.canvas.addEventListener('mouseleave', (e) => {
+            if (this.draggedDrawing) {
+                this.draggedDrawing = null;
+                this.canvas.style.cursor = 'default';
+            }
             if (this.isPanning) {
                 this.isPanning = false;
                 this.canvas.style.cursor = 'default';
@@ -601,16 +625,111 @@ class CandlestickChart {
             
             if (this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode) {
                 this.canvas.style.cursor = 'crosshair';
+            } else if (this.draggedDrawing) {
+                this.canvas.style.cursor = 'grabbing';
             } else if (this.isZoomDragging) {
                 this.canvas.style.cursor = 'grabbing';
             } else if (this.isPanning) {
                 this.canvas.style.cursor = 'grabbing';
             } else if (isOnCanvas) {
-                this.canvas.style.cursor = 'grab';
+                const hit = this.drawingsVisible ? this.hitTestDrawnElements(x, y) : null;
+                this.canvas.style.cursor = hit ? 'move' : 'grab';
             } else {
                 this.canvas.style.cursor = 'default';
             }
         });
+    }
+
+    startDrawingDrag(hit, startX, startY) {
+        const origin = {};
+        if (hit.type === 'line') {
+            const line = this.drawnLines[hit.index];
+            if (!line) return;
+            origin.time1 = line.time1; origin.time2 = line.time2;
+            origin.price1 = line.price1; origin.price2 = line.price2;
+            origin.x1 = line.x1; origin.y1 = line.y1; origin.x2 = line.x2; origin.y2 = line.y2;
+        } else if (hit.type === 'rect') {
+            const rect = this.rectangles[hit.index];
+            if (!rect) return;
+            origin.time1 = rect.time1; origin.time2 = rect.time2;
+            origin.price1 = rect.price1; origin.price2 = rect.price2;
+            origin.x1 = rect.x1; origin.y1 = rect.y1; origin.x2 = rect.x2; origin.y2 = rect.y2;
+        } else if (hit.type === 'ray') {
+            const ray = this.horizontalLines[hit.index];
+            if (!ray) return;
+            origin.time1 = ray.time1; origin.price = ray.price;
+            origin.x1 = ray.x1; origin.y1 = ray.y1; origin.x2 = ray.x2; origin.y2 = ray.y2;
+        } else if (hit.type === 'ruler') {
+            const sel = this.rulerSelections[hit.index];
+            if (!sel) return;
+            origin.time1 = sel.time1; origin.time2 = sel.time2;
+            origin.price1 = sel.price1; origin.price2 = sel.price2;
+            origin.x1 = sel.x1; origin.y1 = sel.y1; origin.x2 = sel.x2; origin.y2 = sel.y2;
+        }
+        this.draggedDrawing = { ...hit, startX, startY, origin };
+    }
+
+    applyDrawingDrag(x, y) {
+        if (!this.draggedDrawing) return;
+        const d = this.draggedDrawing;
+        const deltaTime = this.xToTime(x) - this.xToTime(d.startX);
+        const deltaPrice = this.yToPrice(y) - this.yToPrice(d.startY);
+        const deltaX = x - d.startX;
+        const deltaY = y - d.startY;
+        const hasTimePrice = Number.isFinite(d.origin.time1);
+
+        if (d.type === 'line') {
+            const line = this.drawnLines[d.index];
+            if (!line) return;
+            if (hasTimePrice) {
+                line.time1 = d.origin.time1 + deltaTime;
+                line.time2 = d.origin.time2 + deltaTime;
+                line.price1 = d.origin.price1 + deltaPrice;
+                line.price2 = d.origin.price2 + deltaPrice;
+            } else {
+                line.x1 = d.origin.x1 + deltaX; line.y1 = d.origin.y1 + deltaY;
+                line.x2 = d.origin.x2 + deltaX; line.y2 = d.origin.y2 + deltaY;
+            }
+        } else if (d.type === 'rect') {
+            const rect = this.rectangles[d.index];
+            if (!rect) return;
+            if (hasTimePrice) {
+                rect.time1 = d.origin.time1 + deltaTime;
+                rect.time2 = d.origin.time2 + deltaTime;
+                rect.price1 = d.origin.price1 + deltaPrice;
+                rect.price2 = d.origin.price2 + deltaPrice;
+            } else {
+                rect.x1 = d.origin.x1 + deltaX; rect.y1 = d.origin.y1 + deltaY;
+                rect.x2 = d.origin.x2 + deltaX; rect.y2 = d.origin.y2 + deltaY;
+            }
+        } else if (d.type === 'ray') {
+            const ray = this.horizontalLines[d.index];
+            if (!ray) return;
+            if (hasTimePrice) {
+                ray.time1 = d.origin.time1 + deltaTime;
+                ray.price = d.origin.price + deltaPrice;
+            } else {
+                ray.x1 = d.origin.x1 + deltaX; ray.y1 = d.origin.y1 + deltaY;
+                ray.x2 = d.origin.x2 + deltaX; ray.y2 = d.origin.y2 + deltaY;
+            }
+        } else if (d.type === 'ruler') {
+            const sel = this.rulerSelections[d.index];
+            if (!sel) return;
+            if (hasTimePrice) {
+                sel.time1 = d.origin.time1 + deltaTime;
+                sel.time2 = d.origin.time2 + deltaTime;
+                sel.price1 = d.origin.price1 + deltaPrice;
+                sel.price2 = d.origin.price2 + deltaPrice;
+                const startTime = Math.min(sel.time1, sel.time2);
+                const endTime = Math.max(sel.time1, sel.time2);
+                const minPrice = Math.min(sel.price1, sel.price2);
+                const maxPrice = Math.max(sel.price1, sel.price2);
+                sel.summary = this.calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice);
+            } else {
+                sel.x1 = d.origin.x1 + deltaX; sel.y1 = d.origin.y1 + deltaY;
+                sel.x2 = d.origin.x2 + deltaX; sel.y2 = d.origin.y2 + deltaY;
+            }
+        }
     }
     
     setDrawingMode(enabled) {
@@ -1754,10 +1873,9 @@ class CandlestickChart {
                 this.ctx.strokeStyle = selected ? '#ffa726' : '#4caf50';
                 this.ctx.lineWidth = selected ? 4 : 2;
                 this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
-                if (selection.summary && width > 80 && height > 50) {
-                    if (x + 150 <= maxX && y + 80 <= maxY) {
-                        this.drawRulerSummaryBox(x, y, width, height, selection.summary);
-                    }
+                if (selection.summary) {
+                    const direction = y2 < y1 ? 'up' : 'down';
+                    this.drawRulerSummaryBox(x, y, width, height, selection.summary, direction, minX, minY, maxX, maxY);
                 }
             }
         });
@@ -1787,26 +1905,23 @@ class CandlestickChart {
             }
             
             // Calculate and show preview summary dynamically
-            if (width > 10 && height > 10) {
+            if (width > 2 && height > 2) {
                 const summary = this.calculateRulerSummary(this.currentRulerSelection);
                 
-                if (width > 80 && height > 50) {
-                    // Only draw if text box would be visible
-                    if (x + 150 <= maxX && y + 80 <= maxY) {
-                        this.drawRulerSummaryBox(x, y, width, height, summary);
-                    }
-                }
+                const direction = this.currentRulerSelection.y2 < this.currentRulerSelection.y1 ? 'up' : 'down';
+                this.drawRulerSummaryBox(x, y, width, height, summary, direction, minX, minY, maxX, maxY);
             }
         }
         
         this.ctx.restore();
     }
     
-    drawRulerSummaryBox(x, y, width, height, summary) {
+    drawRulerSummaryBox(x, y, width, height, summary, direction, minX, minY, maxX, maxY) {
         this.ctx.save();
         
         const padding = 10;
         const lineHeight = 16;
+        const outsideGap = 8;
         
         // Format lines like in image: "+16.89%", "3н 9ч", "513 бара"
         const lines = [
@@ -1822,33 +1937,40 @@ class CandlestickChart {
         const boxWidth = textWidth + padding * 2;
         const boxHeight = textHeight + padding * 2;
         
-        // Position box inside selection (top-left corner)
-        const boxX = x + padding;
-        const boxY = y + padding;
-        
-        // Make sure box fits
-        if (boxX + boxWidth <= this.logicalWidth && boxY + boxHeight <= this.logicalHeight) {
-            // Draw green background box
-            this.ctx.fillStyle = 'rgba(76, 175, 80, 0.9)'; // Green background
-            this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
-            
-            // Draw border
-            this.ctx.strokeStyle = '#4caf50';
-            this.ctx.lineWidth = 1;
-            this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
-            
-            // Draw text
-            this.ctx.fillStyle = '#fff';
-            this.ctx.font = 'bold 12px sans-serif';
-            this.ctx.textAlign = 'left';
-            this.ctx.textBaseline = 'top';
-            
-            let textY = boxY + padding;
-            lines.forEach((line) => {
-                this.ctx.fillText(line, boxX + padding, textY);
-                textY += lineHeight;
-            });
+        // Place summary outside the ruler rectangle: up drag -> above, down drag -> below
+        let boxX = x + padding;
+        boxX = Math.max(minX + 2, Math.min(maxX - boxWidth - 2, boxX));
+        let boxY = direction === 'up'
+            ? (y - boxHeight - outsideGap)
+            : (y + height + outsideGap);
+        if (boxY < minY) {
+            boxY = y + height + outsideGap;
         }
+        if (boxY + boxHeight > maxY) {
+            boxY = y - boxHeight - outsideGap;
+        }
+        boxY = Math.max(minY + 2, Math.min(maxY - boxHeight - 2, boxY));
+        
+        // Draw green background box
+        this.ctx.fillStyle = 'rgba(76, 175, 80, 0.9)'; // Green background
+        this.ctx.fillRect(boxX, boxY, boxWidth, boxHeight);
+        
+        // Draw border
+        this.ctx.strokeStyle = '#4caf50';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(boxX, boxY, boxWidth, boxHeight);
+        
+        // Draw text
+        this.ctx.fillStyle = '#fff';
+        this.ctx.font = 'bold 12px sans-serif';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'top';
+        
+        let textY = boxY + padding;
+        lines.forEach((line) => {
+            this.ctx.fillText(line, boxX + padding, textY);
+            textY += lineHeight;
+        });
         
         this.ctx.restore();
     }
@@ -3355,6 +3477,9 @@ function initChart() {
     // Setup levels modal (поддержка/сопротивление)
     setupLevelsModal(chartInstance);
     
+    // Ensure native color pickers close on outside click (notably on macOS)
+    setupColorPickerOutsideClose();
+    
     // Toggle visibility of drawing tools panel
     setupDrawingToggle();
     
@@ -3363,6 +3488,36 @@ function initChart() {
         if (chartInstance) {
             chartInstance.disconnectWebSocket();
         }
+    });
+}
+
+function setupColorPickerOutsideClose() {
+    let activeColorInput = null;
+    const isColorInput = (el) => el instanceof HTMLInputElement && el.type === 'color';
+    document.addEventListener('focusin', (e) => {
+        if (isColorInput(e.target)) {
+            activeColorInput = e.target;
+        }
+    });
+    const closeActiveColorPickerIfNeeded = (target) => {
+        if (!activeColorInput || !document.contains(activeColorInput)) {
+            activeColorInput = null;
+            return;
+        }
+        if (target && (target === activeColorInput || activeColorInput.contains?.(target))) return;
+        activeColorInput.blur();
+        activeColorInput = null;
+    };
+    document.addEventListener('mousedown', (e) => {
+        if (isColorInput(e.target)) return;
+        closeActiveColorPickerIfNeeded(e.target);
+    }, true);
+    document.addEventListener('touchstart', (e) => {
+        if (isColorInput(e.target)) return;
+        closeActiveColorPickerIfNeeded(e.target);
+    }, true);
+    window.addEventListener('blur', () => {
+        closeActiveColorPickerIfNeeded(null);
     });
 }
 
@@ -3443,15 +3598,8 @@ function setupLevelsModal(chart) {
     const resistancePanel = document.getElementById('levelResistanceConfig');
     const supportListCheckbox = document.getElementById('levelSupportEn');
     const resistanceListCheckbox = document.getElementById('levelResistanceEn');
-    const supportPanelCheckbox = document.getElementById('levelSupportPanelEn');
-    const resistancePanelCheckbox = document.getElementById('levelResistancePanelEn');
     const supportColor = document.getElementById('levelSupportColor');
     const resistanceColor = document.getElementById('levelResistanceColor');
-
-    function syncCheckboxes() {
-        if (supportListCheckbox) supportListCheckbox.checked = !!supportPanelCheckbox?.checked;
-        if (resistanceListCheckbox) resistanceListCheckbox.checked = !!resistancePanelCheckbox?.checked;
-    }
 
     function showLevel(level) {
         const isSupport = level === 'support';
@@ -3464,11 +3612,10 @@ function setupLevelsModal(chart) {
 
     function syncFromChart() {
         const cfg = chart.levelsConfig || {};
-        if (supportPanelCheckbox) supportPanelCheckbox.checked = !!cfg.support?.enabled;
-        if (resistancePanelCheckbox) resistancePanelCheckbox.checked = !!cfg.resistance?.enabled;
+        if (supportListCheckbox) supportListCheckbox.checked = !!cfg.support?.enabled;
+        if (resistanceListCheckbox) resistanceListCheckbox.checked = !!cfg.resistance?.enabled;
         if (supportColor) supportColor.value = cfg.support?.color || '#00bcd4';
         if (resistanceColor) resistanceColor.value = cfg.resistance?.color || '#ff5252';
-        syncCheckboxes();
         showLevel('support');
     }
 
@@ -3485,19 +3632,18 @@ function setupLevelsModal(chart) {
 
     function saveFromModal() {
         chart.levelsConfig = {
-            support: { enabled: !!supportPanelCheckbox?.checked, color: supportColor?.value || '#00bcd4' },
-            resistance: { enabled: !!resistancePanelCheckbox?.checked, color: resistanceColor?.value || '#ff5252' }
+            support: { enabled: !!supportListCheckbox?.checked, color: supportColor?.value || '#00bcd4' },
+            resistance: { enabled: !!resistanceListCheckbox?.checked, color: resistanceColor?.value || '#ff5252' }
         };
         chart.draw();
         closeModal();
     }
 
     function resetModal() {
-        if (supportPanelCheckbox) supportPanelCheckbox.checked = false;
-        if (resistancePanelCheckbox) resistancePanelCheckbox.checked = false;
+        if (supportListCheckbox) supportListCheckbox.checked = false;
+        if (resistanceListCheckbox) resistanceListCheckbox.checked = false;
         if (supportColor) supportColor.value = '#00bcd4';
         if (resistanceColor) resistanceColor.value = '#ff5252';
-        syncCheckboxes();
         chart.levelsConfig = {
             support: { enabled: false, color: '#00bcd4' },
             resistance: { enabled: false, color: '#ff5252' }
@@ -3506,21 +3652,11 @@ function setupLevelsModal(chart) {
     }
 
     supportListItem?.addEventListener('click', (e) => {
-        if (e.target instanceof HTMLInputElement && e.target.type === 'checkbox') return;
         showLevel('support');
     });
     resistanceListItem?.addEventListener('click', (e) => {
-        if (e.target instanceof HTMLInputElement && e.target.type === 'checkbox') return;
         showLevel('resistance');
     });
-    supportListCheckbox?.addEventListener('change', () => {
-        if (supportPanelCheckbox) supportPanelCheckbox.checked = !!supportListCheckbox.checked;
-    });
-    resistanceListCheckbox?.addEventListener('change', () => {
-        if (resistancePanelCheckbox) resistancePanelCheckbox.checked = !!resistanceListCheckbox.checked;
-    });
-    supportPanelCheckbox?.addEventListener('change', syncCheckboxes);
-    resistancePanelCheckbox?.addEventListener('change', syncCheckboxes);
 
     btn.addEventListener('click', openModal);
     closeBtn?.addEventListener('click', closeModal);
@@ -3542,23 +3678,16 @@ function setupValuesModal(chart) {
 
     const densityItem = modal.querySelector('.values-item[data-value="density"]');
     const densityListCheckbox = document.getElementById('valueDensityEn');
-    const densityPanelCheckbox = document.getElementById('valueDensityPanelEn');
     const densitySize = document.getElementById('valueDensitySize');
     const densityMmCheckbox = document.getElementById('valueDensityMmEn');
     const densityColor = document.getElementById('valueDensityColor');
 
-    function syncCheckboxes() {
-        const enabled = !!densityPanelCheckbox?.checked;
-        if (densityListCheckbox) densityListCheckbox.checked = enabled;
-    }
-
     function syncFromChart() {
         const cfg = chart.valuesConfig || {};
-        if (densityPanelCheckbox) densityPanelCheckbox.checked = !!cfg.density?.enabled;
+        if (densityListCheckbox) densityListCheckbox.checked = !!cfg.density?.enabled;
         if (densitySize) densitySize.value = cfg.density?.sizeType || 'large';
         if (densityMmCheckbox) densityMmCheckbox.checked = !!cfg.density?.mmEnabled;
         if (densityColor) densityColor.value = cfg.density?.color || '#ff5252';
-        syncCheckboxes();
         densityItem?.classList.add('selected');
         if (titleEl) titleEl.textContent = 'Плотности';
     }
@@ -3582,7 +3711,7 @@ function setupValuesModal(chart) {
         chart.densityAnomalyMultiplier = anomalyMap[sizeType] ?? 10;
         chart.valuesConfig = {
             density: {
-                enabled: !!densityPanelCheckbox?.checked,
+                enabled: !!densityListCheckbox?.checked,
                 color: densityColor?.value || '#ff5252',
                 sizeType,
                 mmEnabled: !!densityMmCheckbox?.checked
@@ -3598,11 +3727,10 @@ function setupValuesModal(chart) {
     }
 
     function resetModal() {
-        if (densityPanelCheckbox) densityPanelCheckbox.checked = false;
+        if (densityListCheckbox) densityListCheckbox.checked = false;
         if (densitySize) densitySize.value = 'large';
         if (densityMmCheckbox) densityMmCheckbox.checked = false;
         if (densityColor) densityColor.value = '#ff5252';
-        syncCheckboxes();
         chart.valuesConfig = { density: { enabled: false, color: '#ff5252', sizeType: 'large', mmEnabled: false } };
         chart.densityVolumePercentage = 2;
         chart.densityAnomalyMultiplier = 10;
@@ -3612,10 +3740,6 @@ function setupValuesModal(chart) {
     }
 
     densityItem?.addEventListener('click', () => densityItem.classList.add('selected'));
-    densityListCheckbox?.addEventListener('change', () => {
-        if (densityPanelCheckbox) densityPanelCheckbox.checked = !!densityListCheckbox.checked;
-    });
-    densityPanelCheckbox?.addEventListener('change', syncCheckboxes);
 
     btn.addEventListener('click', openModal);
     closeBtn?.addEventListener('click', closeModal);
@@ -3645,6 +3769,12 @@ function setupIndicatorsModal(chart) {
     const mainConfig = document.getElementById('mainIndicatorsConfig');
     const subConfig = document.getElementById('subIndicatorsConfig');
     const subConfigTitle = document.getElementById('subIndicatorsConfigTitle');
+    const getMainListCheckbox = (indicatorId) => modal.querySelector(`.indicator-item[data-indicator="${indicatorId}"] input[type="checkbox"]`);
+    const isMainListEnabled = (indicatorId) => !!getMainListCheckbox(indicatorId)?.checked;
+    const setMainListEnabled = (indicatorId, enabled) => {
+        const cb = getMainListCheckbox(indicatorId);
+        if (cb) cb.checked = !!enabled;
+    };
     
     function openModal() {
         modal.classList.add('open');
@@ -3703,7 +3833,7 @@ function setupIndicatorsModal(chart) {
         });
         const b = chart.activeIndicators.boll;
         const el = id => document.getElementById(id);
-        if (el('bollEn')) el('bollEn').checked = !!b;
+        setMainListEnabled('BOLL', !!b);
         if (b) {
             if (el('bollPeriod')) el('bollPeriod').value = b.period ?? 20;
             if (el('bollStd')) el('bollStd').value = b.std ?? 2;
@@ -3712,17 +3842,17 @@ function setupIndicatorsModal(chart) {
             if (el('bollColorLower')) el('bollColorLower').value = b.colorLower || '#2196f3';
         }
         const v = chart.activeIndicators.vwap;
-        if (el('vwapEn')) el('vwapEn').checked = !!v;
+        setMainListEnabled('VWAP', !!v);
         if (v && el('vwapColor')) el('vwapColor').value = v.color || '#00bcd4';
         const s = chart.activeIndicators.sar;
-        if (el('sarEn')) el('sarEn').checked = !!s;
+        setMainListEnabled('SAR', !!s);
         if (s) {
             if (el('sarStep')) el('sarStep').value = s.step ?? 0.02;
             if (el('sarMax')) el('sarMax').value = s.max ?? 0.2;
             if (el('sarColor')) el('sarColor').value = s.color || '#f44336';
         }
         const m = chart.activeIndicators.macd;
-        if (el('macdEn')) el('macdEn').checked = !!m;
+        setMainListEnabled('MACD', !!m);
         if (m) {
             if (el('macdFast')) el('macdFast').value = m.fast ?? 12;
             if (el('macdSlow')) el('macdSlow').value = m.slow ?? 26;
@@ -3731,19 +3861,19 @@ function setupIndicatorsModal(chart) {
             if (el('macdColorSignal')) el('macdColorSignal').value = m.colorSignal ?? '#ff9800';
         }
         const r = chart.activeIndicators.rsi;
-        if (el('rsiEn')) el('rsiEn').checked = !!r;
+        setMainListEnabled('RSI', !!r);
         if (r) {
             if (el('rsiPeriod')) el('rsiPeriod').value = r.period ?? 14;
             if (el('rsiColor')) el('rsiColor').value = r.color ?? '#9c27b0';
         }
         const t = chart.activeIndicators.trix;
-        if (el('trixEn')) el('trixEn').checked = !!t;
+        setMainListEnabled('TRIX', !!t);
         if (t) {
             if (el('trixPeriod')) el('trixPeriod').value = t.period ?? 15;
             if (el('trixColor')) el('trixColor').value = t.color ?? '#00bcd4';
         }
         const u = chart.activeIndicators.super;
-        if (el('superEn')) el('superEn').checked = !!u;
+        setMainListEnabled('SUPER', !!u);
         if (u) {
             if (el('superPeriod')) el('superPeriod').value = u.period ?? 10;
             if (el('superMultiplier')) el('superMultiplier').value = u.multiplier ?? 3;
@@ -3999,15 +4129,15 @@ function setupIndicatorsModal(chart) {
             });
         });
         const el = id => document.getElementById(id);
-        if (el('bollEn')) el('bollEn').checked = true;
+        setMainListEnabled('BOLL', true);
         if (el('bollPeriod')) el('bollPeriod').value = 20;
         if (el('bollStd')) el('bollStd').value = 2;
         if (el('bollColorUpper')) el('bollColorUpper').value = '#2196f3';
         if (el('bollColorMid')) el('bollColorMid').value = '#ff9800';
         if (el('bollColorLower')) el('bollColorLower').value = '#2196f3';
-        if (el('vwapEn')) el('vwapEn').checked = true;
+        setMainListEnabled('VWAP', true);
         if (el('vwapColor')) el('vwapColor').value = '#00bcd4';
-        if (el('sarEn')) el('sarEn').checked = true;
+        setMainListEnabled('SAR', true);
         if (el('sarStep')) el('sarStep').value = 0.02;
         if (el('sarMax')) el('sarMax').value = 0.2;
         if (el('sarColor')) el('sarColor').value = '#f44336';
@@ -4039,10 +4169,9 @@ function setupIndicatorsModal(chart) {
         chart.activeIndicators.ma = readMaEmaWma('ma');
         chart.activeIndicators.ema = readMaEmaWma('ema');
         chart.activeIndicators.wma = readMaEmaWma('wma');
-        const bollEn = document.getElementById('bollEn');
         const bollPeriodEl = document.getElementById('bollPeriod');
         const bollStdEl = document.getElementById('bollStd');
-        if (bollEn?.checked && bollPeriodEl && bollStdEl) {
+        if (isMainListEnabled('BOLL') && bollPeriodEl && bollStdEl) {
             const period = parseInt(bollPeriodEl.value, 10);
             chart.activeIndicators.boll = (period >= 2) ? {
                 period,
@@ -4054,13 +4183,11 @@ function setupIndicatorsModal(chart) {
         } else {
             chart.activeIndicators.boll = null;
         }
-        const vwapEn = document.getElementById('vwapEn');
         const vwapColorEl = document.getElementById('vwapColor');
-        chart.activeIndicators.vwap = (vwapEn?.checked && vwapColorEl) ? { color: vwapColorEl.value } : null;
-        const sarEn = document.getElementById('sarEn');
+        chart.activeIndicators.vwap = (isMainListEnabled('VWAP') && vwapColorEl) ? { color: vwapColorEl.value } : null;
         const sarStepEl = document.getElementById('sarStep');
         const sarMaxEl = document.getElementById('sarMax');
-        if (sarEn?.checked && sarStepEl && sarMaxEl) {
+        if (isMainListEnabled('SAR') && sarStepEl && sarMaxEl) {
             const step = parseFloat(sarStepEl.value);
             chart.activeIndicators.sar = (step > 0) ? {
                 step,
@@ -4070,11 +4197,10 @@ function setupIndicatorsModal(chart) {
         } else {
             chart.activeIndicators.sar = null;
         }
-        const macdEn = document.getElementById('macdEn');
         const macdFastEl = document.getElementById('macdFast');
         const macdSlowEl = document.getElementById('macdSlow');
         const macdSignalEl = document.getElementById('macdSignal');
-        if (macdEn?.checked && macdFastEl && macdSlowEl && macdSignalEl) {
+        if (isMainListEnabled('MACD') && macdFastEl && macdSlowEl && macdSignalEl) {
             const fast = parseInt(macdFastEl.value, 10) || 12;
             const slow = parseInt(macdSlowEl.value, 10) || 26;
             const signal = parseInt(macdSignalEl.value, 10) || 9;
@@ -4086,9 +4212,8 @@ function setupIndicatorsModal(chart) {
         } else {
             chart.activeIndicators.macd = null;
         }
-        const rsiEn = document.getElementById('rsiEn');
         const rsiPeriodEl = document.getElementById('rsiPeriod');
-        if (rsiEn?.checked && rsiPeriodEl) {
+        if (isMainListEnabled('RSI') && rsiPeriodEl) {
             const period = parseInt(rsiPeriodEl.value, 10) || 14;
             chart.activeIndicators.rsi = (period >= 2) ? {
                 period,
@@ -4097,9 +4222,8 @@ function setupIndicatorsModal(chart) {
         } else {
             chart.activeIndicators.rsi = null;
         }
-        const trixEn = document.getElementById('trixEn');
         const trixPeriodEl = document.getElementById('trixPeriod');
-        if (trixEn?.checked && trixPeriodEl) {
+        if (isMainListEnabled('TRIX') && trixPeriodEl) {
             const period = parseInt(trixPeriodEl.value, 10) || 15;
             chart.activeIndicators.trix = (period >= 1) ? {
                 period,
@@ -4108,10 +4232,9 @@ function setupIndicatorsModal(chart) {
         } else {
             chart.activeIndicators.trix = null;
         }
-        const superEn = document.getElementById('superEn');
         const superPeriodEl = document.getElementById('superPeriod');
         const superMultEl = document.getElementById('superMultiplier');
-        if (superEn?.checked && superPeriodEl && superMultEl) {
+        if (isMainListEnabled('SUPER') && superPeriodEl && superMultEl) {
             const period = parseInt(superPeriodEl.value, 10) || 10;
             const multiplier = parseFloat(superMultEl.value) || 3;
             chart.activeIndicators.super = (period >= 1 && multiplier > 0) ? {
@@ -4306,13 +4429,13 @@ function setupIndicatorsModal(chart) {
             }
         });
         const el = id => document.getElementById(id);
-        if (el('bollEn')) el('bollEn').checked = false;
-        if (el('vwapEn')) el('vwapEn').checked = false;
-        if (el('sarEn')) el('sarEn').checked = false;
-        if (el('macdEn')) el('macdEn').checked = false;
-        if (el('rsiEn')) el('rsiEn').checked = false;
-        if (el('trixEn')) el('trixEn').checked = false;
-        if (el('superEn')) el('superEn').checked = false;
+        setMainListEnabled('BOLL', false);
+        setMainListEnabled('VWAP', false);
+        setMainListEnabled('SAR', false);
+        setMainListEnabled('MACD', false);
+        setMainListEnabled('RSI', false);
+        setMainListEnabled('TRIX', false);
+        setMainListEnabled('SUPER', false);
         chart.activeIndicators.subVol = null;
         chart.activeIndicators.subMacd = null;
         chart.activeIndicators.subRsi = null;
@@ -4365,7 +4488,6 @@ function setupIndicatorsModal(chart) {
                 const checked = e.target.checked;
                 if (Array.isArray(en)) en.forEach(id => { const el = document.getElementById(id); if (el) el.checked = checked; });
                 else if (en) { const el = document.getElementById(en); if (el) el.checked = checked; }
-                return;
             }
             document.querySelectorAll('.sub-indicator-item').forEach(i => i.classList.remove('selected'));
             item.classList.add('selected');
@@ -4391,7 +4513,6 @@ function setupIndicatorsModal(chart) {
     
     modal.querySelectorAll('.indicator-item[data-indicator]').forEach(item => {
         item.addEventListener('click', (e) => {
-            if (e.target.type === 'checkbox') return;
             modal.querySelectorAll('.indicator-item[data-indicator]').forEach(i => i.classList.remove('selected'));
             item.classList.add('selected');
             const id = item.getAttribute('data-indicator') || item.querySelector('input')?.value || 'MA';
