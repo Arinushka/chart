@@ -35,6 +35,22 @@ class CandlestickChart {
         this.ws = null; // WebSocket connection
         this.wsReconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
+        this.livePriceLineConfig = {
+            enabled: true,
+            dash: [8, 6],
+            lineWidth: 1.5,
+            upColor: '#26a69a',
+            downColor: '#ef5350'
+        };
+        this.crosshair = {
+            enabled: true,
+            active: false,
+            x: 0,
+            y: 0,
+            dash: [4, 4],
+            color: 'rgba(220, 220, 220, 0.85)',
+            lineWidth: 1
+        };
         
         // Drawing mode state
         this.drawingMode = false;
@@ -65,6 +81,7 @@ class CandlestickChart {
         this.zoomDragStartTimeRange = 0;
         this.zoomDragStartPriceRange = 0;
         this.zoomDragStartVisible = null;
+        this.zoomDragAxis = 'both'; // 'time' | 'price' | 'both'
         this.panStartVisibleStartTime = 0;
         this.panStartVisibleEndTime = 0;
         this.panStartVisibleMinPrice = 0;
@@ -234,6 +251,7 @@ class CandlestickChart {
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
+            const crosshairChanged = this.updateCrosshairState(x, y);
 
             if (this.draggedDrawing) {
                 this.applyDrawingDrag(x, y);
@@ -246,22 +264,48 @@ class CandlestickChart {
                 const deltaX = x - this.zoomDragStartX;
                 const deltaY = y - this.zoomDragStartY;
                 const chartAreaHeight = this.chartHeight - this.volumeHeight;
+                const zoomAxis = this.zoomDragAxis || 'both';
                 const normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
                 const pivotPrice = (this.zoomDragStartVisible.minPrice + this.zoomDragStartVisible.maxPrice) / 2;
                 const timeMult = Math.max(0.05, Math.min(3, 1 - deltaX / 400));
                 const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
-                let newTimeRange = this.zoomDragStartTimeRange * timeMult;
-                let newPriceRange = this.zoomDragStartPriceRange * priceMult;
-                newTimeRange = Math.max(this.timeRange * 0.005, newTimeRange);
-                newPriceRange = Math.max(this.priceRange * 0.005, newPriceRange);
-                let newStartTime = pivotTime - newTimeRange * normX;
-                let newEndTime = newStartTime + newTimeRange;
-                let newMinPrice = pivotPrice - newPriceRange / 2;
-                let newMaxPrice = pivotPrice + newPriceRange / 2;
-                const oneViewW = this.timeRange * 0.5;
-                if (newStartTime < this.startTime - oneViewW) { newStartTime = this.startTime - oneViewW; newEndTime = newStartTime + newTimeRange; }
-                if (newEndTime > this.endTime + oneViewW) { newEndTime = this.endTime + oneViewW; newStartTime = newEndTime - newTimeRange; }
+                const minTimeRange = Math.max(this.timeRange * 0.005, 1);
+                const minPriceRange = Math.max(this.priceRange * 0.005, 1e-9);
+                let newTimeRange = this.zoomDragStartTimeRange;
+                let newPriceRange = this.zoomDragStartPriceRange;
+                if (zoomAxis === 'time' || zoomAxis === 'both') {
+                    newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * timeMult);
+                }
+                if (zoomAxis === 'price' || zoomAxis === 'both') {
+                    newPriceRange = Math.max(minPriceRange, this.zoomDragStartPriceRange * priceMult);
+                }
+
+                let newStartTime = this.zoomDragStartVisible.startTime;
+                let newEndTime = this.zoomDragStartVisible.endTime;
+                if (zoomAxis === 'time') {
+                    // Для нижней оси времени якорим масштаб к текущему моменту (последней свече),
+                    // чтобы зум тянулся к "сейчас", а не к центру экрана.
+                    const ratio = Math.max(0.1, Math.min(0.9, this.chartEndPositionRatio || (2 / 3)));
+                    const maxTimeRange = Math.max(minTimeRange, (this.timeRange || minTimeRange) / ratio);
+                    newTimeRange = Math.min(newTimeRange, maxTimeRange);
+                    const anchorTime = this.endTime;
+                    newStartTime = anchorTime - newTimeRange * ratio;
+                    newEndTime = newStartTime + newTimeRange;
+                } else {
+                    newStartTime = pivotTime - newTimeRange * normX;
+                    newEndTime = newStartTime + newTimeRange;
+                    const oneViewW = this.timeRange * 0.5;
+                    if (newStartTime < this.startTime - oneViewW) { newStartTime = this.startTime - oneViewW; newEndTime = newStartTime + newTimeRange; }
+                    if (newEndTime > this.endTime + oneViewW) { newEndTime = this.endTime + oneViewW; newStartTime = newEndTime - newTimeRange; }
+                }
+
+                let newMinPrice = this.zoomDragStartVisible.minPrice;
+                let newMaxPrice = this.zoomDragStartVisible.maxPrice;
+                if (zoomAxis === 'price' || zoomAxis === 'both') {
+                    newMinPrice = pivotPrice - newPriceRange / 2;
+                    newMaxPrice = pivotPrice + newPriceRange / 2;
+                }
                 this.visibleStartTime = newStartTime;
                 this.visibleEndTime = newEndTime;
                 this.visibleMinPrice = newMinPrice;
@@ -342,6 +386,10 @@ class CandlestickChart {
                 this.tempPoint = { x, y };
                 this.draw();
                 return;
+            }
+
+            if (crosshairChanged) {
+                this.draw();
             }
         });
         
@@ -518,6 +566,7 @@ class CandlestickChart {
                 if (e.button === 0) {
                     if (inAxisArea) {
                         this.isZoomDragging = true;
+                        this.zoomDragAxis = (inTimeAxis && inPriceAxis) ? 'both' : (inTimeAxis ? 'time' : 'price');
                         this.zoomDragStartX = x;
                         this.zoomDragStartY = y;
                         this.zoomDragStartTimeRange = this.visibleEndTime - this.visibleStartTime;
@@ -557,6 +606,7 @@ class CandlestickChart {
             if (e.button === 0) {
                 this.draggedDrawing = null;
                 this.isZoomDragging = false;
+                this.zoomDragAxis = 'both';
                 this.isPanning = false;
                 this.canvas.style.cursor = 'default';
             }
@@ -578,7 +628,12 @@ class CandlestickChart {
             }
             if (this.isZoomDragging) {
                 this.isZoomDragging = false;
+                this.zoomDragAxis = 'both';
                 this.canvas.style.cursor = 'default';
+            }
+            if (this.crosshair?.active) {
+                this.crosshair.active = false;
+                this.draw();
             }
         });
         
@@ -632,12 +687,52 @@ class CandlestickChart {
             } else if (this.isPanning) {
                 this.canvas.style.cursor = 'grabbing';
             } else if (isOnCanvas) {
-                const hit = this.drawingsVisible ? this.hitTestDrawnElements(x, y) : null;
-                this.canvas.style.cursor = hit ? 'move' : 'grab';
+                if (this.isPointInMainChartArea(x, y)) {
+                    this.canvas.style.cursor = 'crosshair';
+                } else {
+                    this.canvas.style.cursor = 'default';
+                }
             } else {
                 this.canvas.style.cursor = 'default';
             }
         });
+    }
+
+    isPointInMainChartArea(x, y) {
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        return x >= this.padding.left &&
+            x <= this.logicalWidth - this.padding.right &&
+            y >= this.padding.top &&
+            y <= this.padding.top + chartAreaHeight;
+    }
+
+    updateCrosshairState(x, y) {
+        if (!this.crosshair?.enabled) return false;
+        const isInChart = this.isPointInMainChartArea(x, y);
+        if (!isInChart) {
+            if (this.crosshair.active) {
+                this.crosshair.active = false;
+                return true;
+            }
+            return false;
+        }
+
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = this.padding.left;
+        const maxX = this.logicalWidth - this.padding.right;
+        const minY = this.padding.top;
+        const maxY = this.padding.top + chartAreaHeight;
+        const clampedX = Math.max(minX, Math.min(maxX, x));
+        const clampedY = Math.max(minY, Math.min(maxY, y));
+
+        const changed = !this.crosshair.active ||
+            Math.abs(this.crosshair.x - clampedX) > 0.1 ||
+            Math.abs(this.crosshair.y - clampedY) > 0.1;
+
+        this.crosshair.active = true;
+        this.crosshair.x = clampedX;
+        this.crosshair.y = clampedY;
+        return changed;
     }
 
     startDrawingDrag(hit, startX, startY) {
@@ -1788,6 +1883,135 @@ class CandlestickChart {
             const label = this.formatPrice(price);
             this.ctx.fillText(label, this.logicalWidth - this.padding.right + 5, y + 4);
         }
+    }
+
+    getCurrentLivePrice() {
+        if (!Array.isArray(this.candles) || this.candles.length === 0) return null;
+        const lastCandle = this.candles[this.candles.length - 1];
+        if (!lastCandle || !Number.isFinite(lastCandle.close)) return null;
+        return lastCandle.close;
+    }
+
+    drawLivePriceLine() {
+        const cfg = this.livePriceLineConfig;
+        if (!cfg?.enabled) return;
+
+        const livePrice = this.getCurrentLivePrice();
+        if (!Number.isFinite(livePrice)) return;
+
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = Math.ceil(this.padding.left);
+        const minY = Math.ceil(this.padding.top);
+        const maxX = Math.floor(this.logicalWidth - this.padding.right);
+        const maxY = Math.floor(this.padding.top + chartAreaHeight);
+        const y = this.priceToY(livePrice);
+        if (!Number.isFinite(y) || y < minY || y > maxY) return;
+
+        const lastCandle = this.candles[this.candles.length - 1];
+        const lineColor = lastCandle.close >= lastCandle.open ? cfg.upColor : cfg.downColor;
+
+        this.ctx.save();
+
+        // Dashed live price line only inside chart area.
+        this.ctx.beginPath();
+        this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
+        this.ctx.clip();
+        this.ctx.strokeStyle = lineColor;
+        this.ctx.lineWidth = cfg.lineWidth || 1.5;
+        this.ctx.setLineDash(Array.isArray(cfg.dash) ? cfg.dash : [8, 6]);
+        this.ctx.beginPath();
+        this.ctx.moveTo(minX, y);
+        this.ctx.lineTo(maxX, y);
+        this.ctx.stroke();
+        this.ctx.restore();
+
+        // Price label on the right axis.
+        this.ctx.save();
+        this.ctx.setLineDash([]);
+        this.ctx.font = '11px sans-serif';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'middle';
+        const label = this.formatPrice(livePrice);
+        const padX = 6;
+        const boxH = 18;
+        const textW = this.ctx.measureText(label).width;
+        const boxW = textW + padX * 2;
+        const boxX = this.logicalWidth - this.padding.right + 2;
+        const boxY = y - boxH / 2;
+        this.ctx.fillStyle = lineColor;
+        this.ctx.fillRect(boxX, boxY, boxW, boxH);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillText(label, boxX + padX, y);
+        this.ctx.restore();
+    }
+
+    drawCrosshair() {
+        if (!this.crosshair?.enabled || !this.crosshair?.active) return;
+        const x = this.crosshair.x;
+        const y = this.crosshair.y;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return;
+
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = Math.ceil(this.padding.left);
+        const minY = Math.ceil(this.padding.top);
+        const maxX = Math.floor(this.logicalWidth - this.padding.right);
+        const maxY = Math.floor(this.padding.top + chartAreaHeight);
+        if (x < minX || x > maxX || y < minY || y > maxY) return;
+
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
+        this.ctx.clip();
+        this.ctx.strokeStyle = this.crosshair.color || 'rgba(220, 220, 220, 0.85)';
+        this.ctx.lineWidth = this.crosshair.lineWidth || 1;
+        this.ctx.setLineDash(Array.isArray(this.crosshair.dash) ? this.crosshair.dash : [4, 4]);
+
+        this.ctx.beginPath();
+        this.ctx.moveTo(minX, y);
+        this.ctx.lineTo(maxX, y);
+        this.ctx.stroke();
+
+        this.ctx.beginPath();
+        this.ctx.moveTo(x, minY);
+        this.ctx.lineTo(x, maxY);
+        this.ctx.stroke();
+        this.ctx.restore();
+
+        const hoverPrice = this.yToPrice(y);
+        const hoverTime = this.xToTime(x);
+        if (!Number.isFinite(hoverPrice) || !Number.isFinite(hoverTime)) return;
+
+        this.ctx.save();
+        this.ctx.setLineDash([]);
+        this.ctx.font = '11px sans-serif';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'middle';
+
+        const priceLabel = this.formatPrice(hoverPrice);
+        const pricePadX = 6;
+        const priceBoxH = 18;
+        const priceTextW = this.ctx.measureText(priceLabel).width;
+        const priceBoxW = priceTextW + pricePadX * 2;
+        const priceBoxX = this.logicalWidth - this.padding.right + 2;
+        const priceBoxY = y - priceBoxH / 2;
+        this.ctx.fillStyle = '#3a3a3a';
+        this.ctx.fillRect(priceBoxX, priceBoxY, priceBoxW, priceBoxH);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillText(priceLabel, priceBoxX + pricePadX, y);
+
+        const timeLabel = this.formatTime(hoverTime);
+        const timePadX = 6;
+        const timeBoxH = 18;
+        const timeTextW = this.ctx.measureText(timeLabel).width;
+        const timeBoxW = timeTextW + timePadX * 2;
+        const timeBoxX = Math.max(this.padding.left, Math.min(x - timeBoxW / 2, this.logicalWidth - this.padding.right - timeBoxW));
+        const timeTextY = this.logicalHeight - this.padding.bottom + 20;
+        const timeBoxY = timeTextY - timeBoxH / 2;
+        this.ctx.fillStyle = '#3a3a3a';
+        this.ctx.fillRect(timeBoxX, timeBoxY, timeBoxW, timeBoxH);
+        this.ctx.fillStyle = '#ffffff';
+        this.ctx.fillText(timeLabel, timeBoxX + timePadX, timeTextY);
+        this.ctx.restore();
     }
     
     drawXAxis() {
@@ -3424,7 +3648,9 @@ class CandlestickChart {
                 this.drawRulerSelections();
                 this.drawDrawnLines();
             }
+            this.drawCrosshair();
             this.drawYAxis();
+            this.drawLivePriceLine();
             this.drawXAxis();
             // this.drawWatermark(); // Removed PTB watermark
         } catch (error) {
@@ -3524,11 +3750,20 @@ function setupColorPickerOutsideClose() {
 function setupDrawingToggle() {
     const btn = document.getElementById('drawingToggleBtn');
     if (!btn || !chartInstance) return;
-    if (chartInstance.drawingsVisible) btn.classList.add('active');
+    const eyeOpenIcon = '<svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const eyeOffIcon = '<svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M17.94 17.94A10.94 10.94 0 0 1 12 20C5 20 1 12 1 12a21.76 21.76 0 0 1 5.06-6.94"/><path d="M9.9 4.24A10.93 10.93 0 0 1 12 4c7 0 11 8 11 8a21.8 21.8 0 0 1-3.24 4.64"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
+    const syncDrawingToggleButton = () => {
+        const visible = !!chartInstance.drawingsVisible;
+        btn.setAttribute('aria-pressed', visible ? 'true' : 'false');
+        btn.title = visible ? 'Скрыть элементы рисования' : 'Показать элементы рисования';
+        btn.innerHTML = visible ? eyeOpenIcon : eyeOffIcon;
+        btn.classList.remove('active');
+    };
+
+    syncDrawingToggleButton();
     btn.addEventListener('click', () => {
         chartInstance.drawingsVisible = !chartInstance.drawingsVisible;
-        btn.setAttribute('aria-pressed', chartInstance.drawingsVisible ? 'true' : 'false');
-        btn.classList.toggle('active', chartInstance.drawingsVisible);
+        syncDrawingToggleButton();
         chartInstance.draw();
     });
 }
