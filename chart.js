@@ -688,7 +688,8 @@ class CandlestickChart {
                 this.canvas.style.cursor = 'grabbing';
             } else if (isOnCanvas) {
                 if (this.isPointInMainChartArea(x, y)) {
-                    this.canvas.style.cursor = 'crosshair';
+                    const hit = this.drawingsVisible ? this.hitTestDrawnElements(x, y) : null;
+                    this.canvas.style.cursor = hit ? 'pointer' : 'crosshair';
                 } else {
                     this.canvas.style.cursor = 'default';
                 }
