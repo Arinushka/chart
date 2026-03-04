@@ -1618,6 +1618,17 @@ class CandlestickChart {
         return `${hours}:${minutes}`;
     }
 
+    formatDateTime(time) {
+        const date = new Date(time);
+        const dd = String(date.getDate()).padStart(2, '0');
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const yyyy = date.getFullYear();
+        const hh = String(date.getHours()).padStart(2, '0');
+        const min = String(date.getMinutes()).padStart(2, '0');
+        const ss = String(date.getSeconds()).padStart(2, '0');
+        return `${dd}.${mm}.${yyyy} ${hh}:${min}:${ss}`;
+    }
+
     snapHalfPixel(value) {
         if (!Number.isFinite(value)) return value;
         return Math.round(value) + 0.5;
@@ -2038,7 +2049,7 @@ class CandlestickChart {
         this.ctx.fillStyle = '#ffffff';
         this.ctx.fillText(priceLabel, priceBoxX + pricePadX, this.snapHalfPixel(y));
 
-        const timeLabel = this.formatTime(hoverTime);
+        const timeLabel = this.formatDateTime(hoverTime);
         const timePadX = 6;
         const timeBoxH = 18;
         const timeTextW = this.ctx.measureText(timeLabel).width;
@@ -2046,8 +2057,12 @@ class CandlestickChart {
         const timeBoxX = Math.max(this.padding.left, Math.min(x - timeBoxW / 2, this.logicalWidth - this.padding.right - timeBoxW));
         const timeTextY = this.snapHalfPixel(this.logicalHeight - this.padding.bottom + 20);
         const timeBoxY = timeTextY - timeBoxH / 2;
-        this.ctx.fillStyle = '#3a3a3a';
+        this.ctx.globalAlpha = 1;
+        this.ctx.fillStyle = '#0f0f0f';
         this.ctx.fillRect(timeBoxX, timeBoxY, timeBoxW, timeBoxH);
+        this.ctx.strokeStyle = '#555';
+        this.ctx.lineWidth = 1;
+        this.ctx.strokeRect(timeBoxX, timeBoxY, timeBoxW, timeBoxH);
         this.ctx.fillStyle = '#ffffff';
         this.ctx.fillText(timeLabel, timeBoxX + timePadX, timeTextY);
         this.ctx.restore();
@@ -3699,10 +3714,11 @@ class CandlestickChart {
                 this.drawRulerSelections();
                 this.drawDrawnLines();
             }
-            this.drawCrosshair();
             this.drawYAxis();
             this.drawLivePriceLine();
             this.drawXAxis();
+            // Crosshair labels must be above axis labels.
+            this.drawCrosshair();
             // this.drawWatermark(); // Removed PTB watermark
         } catch (error) {
             console.error('Error drawing chart:', error);
