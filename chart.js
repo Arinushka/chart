@@ -188,6 +188,8 @@ class CandlestickChart {
             this.visibleEndTime = newEndTime;
             this.visibleMinPrice = newMinPrice;
             this.visibleMaxPrice = newMaxPrice;
+            this.axisZoomUsed = true;
+            this.showResetZoomButton();
             this.draw();
         });
     }
@@ -268,7 +270,8 @@ class CandlestickChart {
                 const normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
                 const pivotPrice = (this.zoomDragStartVisible.minPrice + this.zoomDragStartVisible.maxPrice) / 2;
-                const timeMult = Math.max(0.05, Math.min(3, 1 - deltaX / 400));
+                const timeMultRaw = (zoomAxis === 'time') ? (1 + deltaX / 400) : (1 - deltaX / 400);
+                const timeMult = Math.max(0.05, Math.min(3, timeMultRaw));
                 const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
                 const minTimeRange = Math.max(this.timeRange * 0.005, 1);
                 const minPriceRange = Math.max(this.priceRange * 0.005, 1e-9);
