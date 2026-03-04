@@ -1061,16 +1061,18 @@ class CandlestickChart {
         }
         
         const rect = container.getBoundingClientRect();
-        const width = Math.max(1, rect.width);
-        const height = Math.max(1, rect.height);
+        // Use integer logical size to avoid sub-pixel CSS scaling blur.
+        const width = Math.max(1, Math.round(rect.width));
+        const height = Math.max(1, Math.round(rect.height));
         
-        this.dpr = Math.min(window.devicePixelRatio || 1, 2);
+        // Keep high-DPI rendering sharp on zoomed/high-res displays.
+        this.dpr = Math.max(1, Math.min(window.devicePixelRatio || 1, 4));
         this.logicalWidth = width;
         this.logicalHeight = height;
-        this.canvas.width = width * this.dpr;
-        this.canvas.height = height * this.dpr;
-        this.canvas.style.width = width + 'px';
-        this.canvas.style.height = height + 'px';
+        this.canvas.width = Math.max(1, Math.round(width * this.dpr));
+        this.canvas.height = Math.max(1, Math.round(height * this.dpr));
+        this.canvas.style.width = this.logicalWidth + 'px';
+        this.canvas.style.height = this.logicalHeight + 'px';
         this.ctx.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
         
         const oldChartWidth = this.chartWidth;
@@ -1153,10 +1155,11 @@ class CandlestickChart {
             this.ws.close();
         }
         
-        // Binance WebSocket stream URL
-        // Format: wss://stream.binance.com:9443/ws/{symbol}@kline_{interval}
+        // Binance combined streams:
+        // - kline: агрегированные обновления свечи
+        // - trade: тиковые сделки для максимально "живой" реакции последней свечи
         const symbolLower = this.symbol.toLowerCase();
-        const wsUrl = `wss://stream.binance.com:9443/ws/${symbolLower}@kline_${this.interval}`;
+        const wsUrl = `wss://stream.binance.com:9443/stream?streams=${symbolLower}@kline_${this.interval}/${symbolLower}@trade`;
         
         console.log(`Connecting to WebSocket: ${wsUrl}`);
         
@@ -1209,34 +1212,12 @@ class CandlestickChart {
     }
     
     handleWebSocketMessage(data) {
-        // Binance kline WebSocket message format:
-        // {
-        //   "e": "kline",
-        //   "E": 123456789,  // Event time
-        //   "s": "BTCUSDT", // Symbol
-        //   "k": {
-        //     "t": 123400000, // Kline start time
-        //     "T": 123400000, // Kline close time
-        //     "s": "BTCUSDT", // Symbol
-        //     "i": "1h",     // Interval
-        //     "f": 100,       // First trade ID
-        //     "L": 200,       // Last trade ID
-        //     "o": "0.0010",  // Open price
-        //     "c": "0.0020",  // Close price
-        //     "h": "0.0025",  // High price
-        //     "l": "0.0005",  // Low price
-        //     "v": "1000",    // Volume
-        //     "n": 100,       // Number of trades
-        //     "x": false,     // Is this kline closed?
-        //     "q": "1.0000",  // Quote asset volume
-        //     "V": "500",     // Taker buy base asset volume
-        //     "Q": "0.500",   // Taker buy quote asset volume
-        //     "B": "123456"   // Ignore
-        //   }
-        // }
+        // Combined stream format: { stream: "...", data: { ...event... } }
+        const payload = (data && data.data && data.stream) ? data.data : data;
+        if (!payload || !payload.e) return;
         
-        if (data.e === 'kline' && data.k) {
-            const kline = data.k;
+        if (payload.e === 'kline' && payload.k) {
+            const kline = payload.k;
             const candleTime = kline.t; // Kline start time
             const isClosed = kline.x; // Is this kline closed?
             
@@ -1300,6 +1281,48 @@ class CandlestickChart {
             
             this.updateTopBarMetrics();
             // Redraw chart
+            this.draw();
+            return;
+        }
+
+        if (payload.e === 'trade') {
+            const tradePrice = parseFloat(payload.p);
+            const tradeQty = parseFloat(payload.q || '0');
+            const tradeTime = Number(payload.T || payload.E || Date.now());
+            if (!Number.isFinite(tradePrice) || !Number.isFinite(tradeTime)) return;
+
+            const intervalMs = this.getIntervalMs(this.interval);
+            if (!Number.isFinite(intervalMs) || intervalMs <= 0) return;
+            const candleTime = Math.floor(tradeTime / intervalMs) * intervalMs;
+
+            // Обновляем текущую свечу на каждый трейд, чтобы график реагировал тиково.
+            let candleIndex = this.candles.findIndex(c => c.time === candleTime);
+            if (candleIndex >= 0) {
+                const c = this.candles[candleIndex];
+                c.high = Math.max(c.high, tradePrice);
+                c.low = Math.min(c.low, tradePrice);
+                c.close = tradePrice;
+                this.volumeData[candleIndex] = (this.volumeData[candleIndex] || 0) + (Number.isFinite(tradeQty) ? tradeQty : 0);
+            } else {
+                const last = this.candles[this.candles.length - 1];
+                const openPrice = last && Number.isFinite(last.close) ? last.close : tradePrice;
+                const newCandle = {
+                    time: candleTime,
+                    open: openPrice,
+                    high: Math.max(openPrice, tradePrice),
+                    low: Math.min(openPrice, tradePrice),
+                    close: tradePrice
+                };
+                this.candles.push(newCandle);
+                this.volumeData.push(Number.isFinite(tradeQty) ? tradeQty : 0);
+                candleIndex = this.candles.length - 1;
+
+                if (!this.startTime || candleTime < this.startTime) this.startTime = candleTime;
+                if (!this.endTime || candleTime > this.endTime) this.endTime = candleTime;
+                this.timeRange = this.endTime - this.startTime;
+            }
+
+            this.updateTopBarMetrics();
             this.draw();
         }
     }
@@ -1591,6 +1614,11 @@ class CandlestickChart {
         }
         return `${hours}:${minutes}`;
     }
+
+    snapHalfPixel(value) {
+        if (!Number.isFinite(value)) return value;
+        return Math.round(value) + 0.5;
+    }
     
     drawGrid() {
         // Dashed grid lines
@@ -1604,6 +1632,10 @@ class CandlestickChart {
         const minY = this.padding.top;
         const maxX = this.logicalWidth - this.padding.right;
         const maxY = this.padding.top + chartAreaHeight;
+        const snappedMinX = this.snapHalfPixel(minX);
+        const snappedMinY = this.snapHalfPixel(minY);
+        const snappedMaxX = this.snapHalfPixel(maxX);
+        const snappedMaxY = this.snapHalfPixel(maxY);
         
         // Horizontal grid lines (price levels) - based on visible range
         const visiblePriceRange = this.visibleMaxPrice - this.visibleMinPrice;
@@ -1613,11 +1645,12 @@ class CandlestickChart {
         for (let i = 0; i < numPriceLines; i++) {
             const price = this.visibleMinPrice + i * priceStep;
             const y = this.priceToY(price);
+            const snappedY = this.snapHalfPixel(y);
             // Only draw if within bounds
-            if (y >= minY && y <= maxY) {
+            if (snappedY >= minY && snappedY <= maxY) {
                 this.ctx.beginPath();
-                this.ctx.moveTo(minX, y);
-                this.ctx.lineTo(maxX, y);
+                this.ctx.moveTo(snappedMinX, snappedY);
+                this.ctx.lineTo(snappedMaxX, snappedY);
                 this.ctx.stroke();
             }
         }
@@ -1630,11 +1663,12 @@ class CandlestickChart {
         for (let i = 0; i <= numTimeLines; i++) {
             const time = this.visibleStartTime + i * timeStep;
             const x = this.timeToX(time);
+            const snappedX = this.snapHalfPixel(x);
             // Only draw if within bounds
-            if (x >= minX && x <= maxX) {
+            if (snappedX >= minX && snappedX <= maxX) {
                 this.ctx.beginPath();
-                this.ctx.moveTo(x, minY);
-                this.ctx.lineTo(x, maxY);
+                this.ctx.moveTo(snappedX, snappedMinY);
+                this.ctx.lineTo(snappedX, snappedMaxY);
                 this.ctx.stroke();
             }
         }
@@ -1651,7 +1685,7 @@ class CandlestickChart {
         const maxY = this.padding.top + chartAreaHeight;
         
         this.priceLevels.forEach(level => {
-            const y = this.priceToY(level.price);
+            const y = this.snapHalfPixel(this.priceToY(level.price));
             
             // Only draw if within chart bounds (between axes)
             if (y < minY || y > maxY) return;
@@ -1678,11 +1712,11 @@ class CandlestickChart {
                 const textWidth = this.ctx.measureText(level.label).width;
                 this.ctx.fillRect(this.logicalWidth - this.padding.right + 5, y - 9, textWidth + 6, 18);
                 this.ctx.fillStyle = '#000';
-                this.ctx.fillText(level.label, this.logicalWidth - this.padding.right + 8, y + 4);
+                this.ctx.fillText(level.label, this.logicalWidth - this.padding.right + 8, this.snapHalfPixel(y + 4));
             } else {
                 this.ctx.fillStyle = '#999';
                 this.ctx.font = '11px sans-serif';
-                this.ctx.fillText(level.label, this.logicalWidth - this.padding.right + 5, y + 4);
+                this.ctx.fillText(level.label, this.logicalWidth - this.padding.right + 5, this.snapHalfPixel(y + 4));
             }
         });
         
@@ -1750,11 +1784,12 @@ class CandlestickChart {
             
             // Draw wick (thin vertical line) - only if visible
             if (clippedX + clippedWidth / 2 >= minX && clippedX + clippedWidth / 2 <= maxX) {
+                const wickX = this.snapHalfPixel(clippedX + clippedWidth / 2);
                 this.ctx.strokeStyle = color;
                 this.ctx.lineWidth = wickWidth;
                 this.ctx.beginPath();
-                this.ctx.moveTo(clippedX + clippedWidth / 2, highY);
-                this.ctx.lineTo(clippedX + clippedWidth / 2, lowY);
+                this.ctx.moveTo(wickX, this.snapHalfPixel(highY));
+                this.ctx.lineTo(wickX, this.snapHalfPixel(lowY));
                 this.ctx.stroke();
             }
             
@@ -1880,9 +1915,9 @@ class CandlestickChart {
         
         for (let i = 0; i < numLevels; i++) {
             const price = this.visibleMinPrice + i * priceStep;
-            const y = this.priceToY(price);
+            const y = this.snapHalfPixel(this.priceToY(price));
             const label = this.formatPrice(price);
-            this.ctx.fillText(label, this.logicalWidth - this.padding.right + 5, y + 4);
+            this.ctx.fillText(label, this.logicalWidth - this.padding.right + 5, this.snapHalfPixel(y + 4));
         }
     }
 
@@ -1905,7 +1940,7 @@ class CandlestickChart {
         const minY = Math.ceil(this.padding.top);
         const maxX = Math.floor(this.logicalWidth - this.padding.right);
         const maxY = Math.floor(this.padding.top + chartAreaHeight);
-        const y = this.priceToY(livePrice);
+        const y = this.snapHalfPixel(this.priceToY(livePrice));
         if (!Number.isFinite(y) || y < minY || y > maxY) return;
 
         const lastCandle = this.candles[this.candles.length - 1];
@@ -1921,8 +1956,8 @@ class CandlestickChart {
         this.ctx.lineWidth = cfg.lineWidth || 1.5;
         this.ctx.setLineDash(Array.isArray(cfg.dash) ? cfg.dash : [8, 6]);
         this.ctx.beginPath();
-        this.ctx.moveTo(minX, y);
-        this.ctx.lineTo(maxX, y);
+        this.ctx.moveTo(this.snapHalfPixel(minX), y);
+        this.ctx.lineTo(this.snapHalfPixel(maxX), y);
         this.ctx.stroke();
         this.ctx.restore();
 
@@ -1942,14 +1977,14 @@ class CandlestickChart {
         this.ctx.fillStyle = lineColor;
         this.ctx.fillRect(boxX, boxY, boxW, boxH);
         this.ctx.fillStyle = '#ffffff';
-        this.ctx.fillText(label, boxX + padX, y);
+        this.ctx.fillText(label, boxX + padX, this.snapHalfPixel(y));
         this.ctx.restore();
     }
 
     drawCrosshair() {
         if (!this.crosshair?.enabled || !this.crosshair?.active) return;
-        const x = this.crosshair.x;
-        const y = this.crosshair.y;
+        const x = this.snapHalfPixel(this.crosshair.x);
+        const y = this.snapHalfPixel(this.crosshair.y);
         if (!Number.isFinite(x) || !Number.isFinite(y)) return;
 
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
@@ -1968,13 +2003,13 @@ class CandlestickChart {
         this.ctx.setLineDash(Array.isArray(this.crosshair.dash) ? this.crosshair.dash : [4, 4]);
 
         this.ctx.beginPath();
-        this.ctx.moveTo(minX, y);
-        this.ctx.lineTo(maxX, y);
+        this.ctx.moveTo(this.snapHalfPixel(minX), y);
+        this.ctx.lineTo(this.snapHalfPixel(maxX), y);
         this.ctx.stroke();
 
         this.ctx.beginPath();
-        this.ctx.moveTo(x, minY);
-        this.ctx.lineTo(x, maxY);
+        this.ctx.moveTo(x, this.snapHalfPixel(minY));
+        this.ctx.lineTo(x, this.snapHalfPixel(maxY));
         this.ctx.stroke();
         this.ctx.restore();
 
@@ -1998,7 +2033,7 @@ class CandlestickChart {
         this.ctx.fillStyle = '#3a3a3a';
         this.ctx.fillRect(priceBoxX, priceBoxY, priceBoxW, priceBoxH);
         this.ctx.fillStyle = '#ffffff';
-        this.ctx.fillText(priceLabel, priceBoxX + pricePadX, y);
+        this.ctx.fillText(priceLabel, priceBoxX + pricePadX, this.snapHalfPixel(y));
 
         const timeLabel = this.formatTime(hoverTime);
         const timePadX = 6;
@@ -2006,7 +2041,7 @@ class CandlestickChart {
         const timeTextW = this.ctx.measureText(timeLabel).width;
         const timeBoxW = timeTextW + timePadX * 2;
         const timeBoxX = Math.max(this.padding.left, Math.min(x - timeBoxW / 2, this.logicalWidth - this.padding.right - timeBoxW));
-        const timeTextY = this.logicalHeight - this.padding.bottom + 20;
+        const timeTextY = this.snapHalfPixel(this.logicalHeight - this.padding.bottom + 20);
         const timeBoxY = timeTextY - timeBoxH / 2;
         this.ctx.fillStyle = '#3a3a3a';
         this.ctx.fillRect(timeBoxX, timeBoxY, timeBoxW, timeBoxH);
@@ -2027,10 +2062,10 @@ class CandlestickChart {
         
         for (let i = 0; i <= numLabels; i++) {
             const time = this.visibleStartTime + i * timeStep;
-            const x = this.timeToX(time);
+            const x = this.snapHalfPixel(this.timeToX(time));
             const label = this.formatTime(time);
             
-            this.ctx.fillText(label, x, this.logicalHeight - this.padding.bottom + 20);
+            this.ctx.fillText(label, x, this.snapHalfPixel(this.logicalHeight - this.padding.bottom + 20));
         }
     }
     
@@ -2338,9 +2373,13 @@ class CandlestickChart {
                 }
                 const clipped = this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
                 if (clipped) {
+                    const c1x = this.snapHalfPixel(clipped.x1);
+                    const c1y = this.snapHalfPixel(clipped.y1);
+                    const c2x = this.snapHalfPixel(clipped.x2);
+                    const c2y = this.snapHalfPixel(clipped.y2);
                     this.ctx.beginPath();
-                    this.ctx.moveTo(clipped.x1, clipped.y1);
-                    this.ctx.lineTo(clipped.x2, clipped.y2);
+                    this.ctx.moveTo(c1x, c1y);
+                    this.ctx.lineTo(c2x, c2y);
                     this.ctx.stroke();
                     if (isAlert) this.ctx.setLineDash([]);
                     if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
@@ -2463,9 +2502,13 @@ class CandlestickChart {
                 }
                 const clipped = this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
                 if (clipped) {
+                    const c1x = this.snapHalfPixel(clipped.x1);
+                    const c1y = this.snapHalfPixel(clipped.y1);
+                    const c2x = this.snapHalfPixel(clipped.x2);
+                    const c2y = this.snapHalfPixel(clipped.y2);
                     this.ctx.beginPath();
-                    this.ctx.moveTo(clipped.x1, clipped.y1);
-                    this.ctx.lineTo(clipped.x2, clipped.y2);
+                    this.ctx.moveTo(c1x, c1y);
+                    this.ctx.lineTo(c2x, c2y);
                     this.ctx.stroke();
                     this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
                     if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
@@ -2486,11 +2529,15 @@ class CandlestickChart {
                 // Clip line to chart bounds
                 const clipped = this.clipLineToBounds(this.currentLine.x1, this.currentLine.y1, this.tempPoint.x, this.tempPoint.y, minX, minY, maxX, maxY);
                 if (clipped) {
+                    const c1x = this.snapHalfPixel(clipped.x1);
+                    const c1y = this.snapHalfPixel(clipped.y1);
+                    const c2x = this.snapHalfPixel(clipped.x2);
+                    const c2y = this.snapHalfPixel(clipped.y2);
                     this.ctx.strokeStyle = '#4a9eff';
                     this.ctx.globalAlpha = 0.7;
                     this.ctx.beginPath();
-                    this.ctx.moveTo(clipped.x1, clipped.y1);
-                    this.ctx.lineTo(clipped.x2, clipped.y2);
+                    this.ctx.moveTo(c1x, c1y);
+                    this.ctx.lineTo(c2x, c2y);
                     this.ctx.stroke();
                 }
                 
@@ -3597,22 +3644,22 @@ class CandlestickChart {
         if (drawSupport) {
             this.ctx.strokeStyle = levelsCfg.support?.color || '#00bcd4';
             supports.forEach(price => {
-                const y = this.priceToY(price);
+                const y = this.snapHalfPixel(this.priceToY(price));
                 if (y < minY || y > maxY) return;
                 this.ctx.beginPath();
-                this.ctx.moveTo(minX, y);
-                this.ctx.lineTo(maxX, y);
+                this.ctx.moveTo(this.snapHalfPixel(minX), y);
+                this.ctx.lineTo(this.snapHalfPixel(maxX), y);
                 this.ctx.stroke();
             });
         }
         if (drawResistance) {
             this.ctx.strokeStyle = levelsCfg.resistance?.color || '#ff5252';
             resistances.forEach(price => {
-                const y = this.priceToY(price);
+                const y = this.snapHalfPixel(this.priceToY(price));
                 if (y < minY || y > maxY) return;
                 this.ctx.beginPath();
-                this.ctx.moveTo(minX, y);
-                this.ctx.lineTo(maxX, y);
+                this.ctx.moveTo(this.snapHalfPixel(minX), y);
+                this.ctx.lineTo(this.snapHalfPixel(maxX), y);
                 this.ctx.stroke();
             });
         }
@@ -3772,7 +3819,7 @@ function setupDrawingToggle() {
 function setupTimeframeButtons(chart) {
     const timeframeButtons = document.querySelectorAll('.timeframe-btn');
     const defaultInterval = '1d'; // Default interval (1 day)
-    const intervalsOrder = ['3m', '5m', '15m', '30m', '1h', '2h', '4h', '1d'];
+    const intervalsOrder = ['1m', '3m', '5m', '15m', '30m', '1h', '2h', '4h', '1d'];
     
     // Set default active button
     timeframeButtons.forEach(btn => {
