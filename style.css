@@ -160,21 +160,24 @@ body {
 }
 
 .indicators-icon-btn .indicators-icon {
-    font-size: 18px;
-    font-weight: 300;
-    letter-spacing: 2px;
+    width: 18px;
+    height: 18px;
+    display: block;
+    flex-shrink: 0;
 }
 
 .levels-icon-btn .levels-icon {
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 1;
+    width: 18px;
+    height: 18px;
+    display: block;
+    flex-shrink: 0;
 }
 
 .values-icon-btn .values-icon {
-    font-size: 18px;
-    font-weight: 600;
-    line-height: 1;
+    width: 18px;
+    height: 18px;
+    display: block;
+    flex-shrink: 0;
 }
 
 .timeframe-btn {
@@ -279,8 +282,8 @@ body {
 }
 
 .chart-reset-zoom-corner-btn svg {
-    width: 18px;
-    height: 18px;
+    width: 16px;
+    height: 16px;
     display: block;
 }
 

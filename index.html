@@ -33,9 +33,31 @@
                 </div>
             </div>
             <div class="chart-tools">
-                <button class="chart-tool-btn levels-icon-btn" title="Уровни" id="levelsBtn"><span class="levels-icon">↕</span></button>
-                <button class="chart-tool-btn values-icon-btn" title="Значения" id="valuesBtn"><span class="values-icon">〰</span></button>
-                <button class="chart-tool-btn indicators-icon-btn" title="Индикаторы" id="indicatorsBtn"><span class="indicators-icon">📈</span></button>
+                <button class="chart-tool-btn levels-icon-btn" title="Уровни" id="levelsBtn">
+                    <svg class="levels-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M4 6H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                        <path d="M4 18H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                        <path d="M6 6L9 12L12 8L15 14L18 10L21 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
+                    </svg>
+                </button>
+                <button class="chart-tool-btn values-icon-btn" title="Значения" id="valuesBtn">
+                    <svg class="values-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M4 20H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                        <path d="M6 16H18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                        <path d="M8 12H16" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                        <path d="M10 8H14" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
+                        <circle cx="12" cy="4" r="1.5" fill="currentColor"></circle>
+                    </svg>
+                </button>
+                <button class="chart-tool-btn indicators-icon-btn" title="Индикаторы" id="indicatorsBtn">
+                    <svg class="indicators-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                        <path d="M6 18H8V10H6Z" fill="currentColor"></path>
+                        <path d="M9 18H11V6H9Z" fill="currentColor"></path>
+                        <path d="M12 18H14V14H12Z" fill="currentColor"></path>
+                        <path d="M15 18H17V8H15Z" fill="currentColor"></path>
+                        <path d="M18 18H20V12H18Z" fill="currentColor"></path>
+                    </svg>
+                </button>
             </div>
             <div class="timeframe-buttons">
                 <button class="timeframe-btn" data-interval="1m">1M</button>
