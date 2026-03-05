@@ -4094,7 +4094,7 @@ function setupIndicatorsModal(chart) {
     // Merge main and sub lists into a single indicator section.
     if (!modal.dataset.indicatorsUnified && mainList && subList) {
         const mainTitleEl = mainList.querySelector('.indicators-list-title');
-        if (mainTitleEl) mainTitleEl.textContent = 'Индикаторы';
+        if (mainTitleEl) mainTitleEl.remove();
         const subTitleEl = subList.querySelector('.indicators-list-title');
         if (subTitleEl) subTitleEl.remove();
         const subItems = Array.from(subList.querySelectorAll('.sub-indicator-item'));

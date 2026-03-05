@@ -39,14 +39,14 @@
                 </div>
             </div>
             <div class="chart-tools">
-                <button class="chart-tool-btn levels-icon-btn" title="Уровни" id="levelsBtn">
+                <button class="chart-tool-btn levels-icon-btn" title="Уровни поддержки и сопротивления" id="levelsBtn">
                     <svg class="levels-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <path d="M4 6H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                         <path d="M4 18H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                         <path d="M6 6L9 12L12 8L15 14L18 10L21 16" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
                     </svg>
                 </button>
-                <button class="chart-tool-btn values-icon-btn" title="Значения" id="valuesBtn">
+                <button class="chart-tool-btn values-icon-btn" title="Плотности" id="valuesBtn">
                     <svg class="values-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <path d="M4 20H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                         <path d="M6 16H18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
@@ -89,7 +89,6 @@
                     <!-- Главный индикатор: список + панели -->
                     <div class="indicators-tab-content" id="indicatorsMainContent">
                     <div class="indicators-list">
-                        <div class="indicators-list-title">Индикаторы</div>
                         <label class="indicator-item selected" data-indicator="MA"><input type="checkbox" name="indicator" value="MA"> MA</label>
                         <label class="indicator-item" data-indicator="EMA"><input type="checkbox" name="indicator" value="EMA"> EMA</label>
                         <label class="indicator-item" data-indicator="WMA"><input type="checkbox" name="indicator" value="WMA"> WMA</label>
@@ -522,7 +521,6 @@
                 </div>
                 <div class="indicators-modal-body">
                     <div class="indicators-list">
-                        <div class="indicators-list-title">Values</div>
                         <label class="indicator-item values-item selected" data-value="density">
                             <input type="checkbox" id="valueDensityEn">
                             Плотности
@@ -566,7 +564,6 @@
                 </div>
                 <div class="indicators-modal-body">
                     <div class="indicators-list">
-                        <div class="indicators-list-title">Levels</div>
                         <label class="indicator-item levels-item selected" data-level="support">
                             <input type="checkbox" id="levelSupportEn">
                             Поддержки
@@ -607,7 +604,7 @@
                     <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18.387 12C19.198 15.799 21 17 21 17H3s3-2 3-9a6 6 0 0 1 7-5.916"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/><path d="M18 2v6"/><path d="M21 5h-6"/></svg>
                 </button>
                 <button class="tool-btn tool-icon-wrap" title="Brush">
-                    <svg class="tool-icon" viewBox="0 0 15 15" fill="none" aria-hidden="true"><path d="M1.5 0C0.671573 0 0 0.671573 0 1.5C0 2.32843 0.671573 3 1.5 3C1.73157 3 1.95089 2.94752 2.14671 2.85381L12.1462 12.8533C12.0525 13.0491 12 13.2684 12 13.5C12 14.3284 12.6716 15 13.5 15C14.3284 15 15 14.3284 15 13.5C15 12.6716 14.3284 12 13.5 12C13.2684 12 13.0491 12.0525 12.8533 12.1462L2.85381 2.14671C2.94752 1.95089 3 1.73157 3 1.5C3 0.671573 2.32843 0 1.5 0Z" fill="currentColor"/></svg>
+                    <svg class="tool-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M760-80q-50 0-85-35t-35-85q0-14 3-27t9-25L252-652q-12 6-25 9t-27 3q-50 0-85-35t-35-85q0-50 35-85t85-35q50 0 85 35t35 85q0 14-3 27t-9 25l400 400q12-6 25-9t27-3q50 0 85 35t35 85q0 50-35 85t-85 35Z"/></svg>
                 </button>
                 <button class="tool-btn tool-icon-wrap" title="Horizontal Line">
                     <svg class="tool-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M180-380q-42 0-71-29t-29-71q0-42 29-71t71-29q31 0 56 17t36 43h608v80H272q-11 26-36 43t-56 17Z"/></svg>
