@@ -60,7 +60,7 @@ body {
 
 .top-bar .metrics {
     display: flex;
-    gap: 16px;
+    gap: 10px;
     align-items: center;
     flex-shrink: 0;
 }
@@ -69,15 +69,30 @@ body {
     display: flex;
     align-items: center;
     gap: 6px;
+    min-width: 84px;
 }
 
 .metric-icon {
     font-size: 16px;
+    width: 16px;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.metric-icon svg {
+    width: 16px;
+    height: 16px;
+    display: block;
 }
 
 .metric-value {
+    display: inline-block;
+    min-width: 54px;
+    text-align: left;
     font-size: 14px;
     color: #ccc;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
 }
 
 .metric-green .metric-icon,
@@ -109,8 +124,9 @@ body {
 .chart-tools {
     display: flex;
     align-items: center;
-    gap: 8px;
+    gap: 4px;
     flex-shrink: 0;
+    margin-left: -26px;
 }
 
 .drawing-toggle-btn {
@@ -160,22 +176,22 @@ body {
 }
 
 .indicators-icon-btn .indicators-icon {
-    width: 18px;
-    height: 18px;
+    width: 30px;
+    height: 30px;
     display: block;
     flex-shrink: 0;
 }
 
 .levels-icon-btn .levels-icon {
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     display: block;
     flex-shrink: 0;
 }
 
 .values-icon-btn .values-icon {
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     display: block;
     flex-shrink: 0;
 }
@@ -363,11 +379,10 @@ body {
 }
 
 .fullscreen-icon {
+    width: 16px;
+    height: 16px;
     display: block;
-    font-family: "Segoe UI Symbol", "Segoe UI", sans-serif;
-    font-size: 18px;
-    line-height: 1;
-    transform: translateY(-1px);
+    flex-shrink: 0;
 }
 
 /* Indicators Modal */
