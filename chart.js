@@ -4808,7 +4808,7 @@ function setupIndicatorsModal(chart) {
         });
     });
     
-    const titles = { MA: 'MA - Средняя скользящая', EMA: 'EMA - Экспоненциальная средняя', WMA: 'WMA - Взвешенная средняя', BOLL: 'BOLL - Полосы Боллинджера', VWAP: 'VWAP', MACD: 'MACD - Схождение/расхождение скользящих', RSI: 'RSI - Индекс относительной силы', TRIX: 'TRIX - Тройная экспоненциальная средняя', SUPER: 'SUPER - SuperTrend', SAR: 'SAR - Parabolic SAR' };
+    const titles = { MA: 'SMA - Средняя скользящая', EMA: 'EMA - Экспоненциальная средняя', WMA: 'WMA - Взвешенная средняя', BOLL: 'BOLL - Полосы Боллинджера', VWAP: 'VWAP', MACD: 'MACD - Схождение/расхождение скользящих', RSI: 'RSI - Индекс относительной силы', TRIX: 'TRIX - Тройная экспоненциальная средняя', SUPER: 'SUPER - SuperTrend', SAR: 'SAR - Parabolic SAR' };
     
     function showPanelForIndicator(id) {
         if (mainConfig) mainConfig.style.display = '';
