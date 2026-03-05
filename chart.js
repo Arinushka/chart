@@ -38,7 +38,7 @@ class CandlestickChart {
         this.livePriceLineConfig = {
             enabled: true,
             dash: [8, 6],
-            lineWidth: 1.5,
+            lineWidth: 0.6,
             upColor: '#26a69a',
             downColor: '#ef5350'
         };
@@ -1967,7 +1967,7 @@ class CandlestickChart {
         this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
         this.ctx.clip();
         this.ctx.strokeStyle = lineColor;
-        this.ctx.lineWidth = cfg.lineWidth || 1.5;
+        this.ctx.lineWidth = cfg.lineWidth || 0.6;
         this.ctx.setLineDash(Array.isArray(cfg.dash) ? cfg.dash : [8, 6]);
         this.ctx.beginPath();
         this.ctx.moveTo(this.snapHalfPixel(minX), y);
