@@ -124,7 +124,7 @@ body {
 .chart-tools {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 8px;
     flex-shrink: 0;
     margin-left: -26px;
 }
@@ -176,22 +176,22 @@ body {
 }
 
 .indicators-icon-btn .indicators-icon {
-    width: 30px;
-    height: 30px;
+    width: 24px;
+    height: 24px;
     display: block;
     flex-shrink: 0;
 }
 
 .levels-icon-btn .levels-icon {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     display: block;
     flex-shrink: 0;
 }
 
 .values-icon-btn .values-icon {
-    width: 22px;
-    height: 22px;
+    width: 18px;
+    height: 18px;
     display: block;
     flex-shrink: 0;
 }
