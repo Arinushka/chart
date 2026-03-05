@@ -125,6 +125,8 @@ class CandlestickChart {
             resistance: { enabled: false, color: '#ff5252' }
         };
         this.densityData = null; // { currentPrice, bidDensity, askDensity, dailyVolume }
+        this.densityAppearance = { bid: null, ask: null }; // first seen timestamp in order book
+        this.densityMatchTolerancePct = 0.05; // same density if price changed <= 0.05%
         this.densityVolumePercentage = 2; // Порог плотности, % от суточного объема
         this.densityDepth = 500; // Глубина стакана
         this.densityUpdateTimer = null;
@@ -2378,7 +2380,7 @@ class CandlestickChart {
                 const selected = this.selectedDrawing?.type === 'ray' && this.selectedDrawing?.index === index;
                 const isAlert = !!line.alert;
                 this.ctx.strokeStyle = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
-                this.ctx.lineWidth = selected ? 4 : 2;
+                this.ctx.lineWidth = selected ? (isAlert ? 1.2 : 4) : (isAlert ? 0.6 : 2);
                 if (isAlert) this.ctx.setLineDash([8, 4]);
                 let x1, y1, x2, y2;
                 if (line.time1 != null && line.price != null) {
@@ -2577,6 +2579,61 @@ class CandlestickChart {
             }
         }
         
+        this.ctx.restore();
+    }
+
+    drawAlertPriceLabels() {
+        if (!Array.isArray(this.horizontalLines) || this.horizontalLines.length === 0) return;
+        const alertLevels = this.horizontalLines
+            .map((line, index) => ({ line, index }))
+            .filter(({ line }) => !!line?.alert && Number.isFinite(line.price));
+        if (alertLevels.length === 0) return;
+
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minY = Math.ceil(this.padding.top);
+        const maxY = Math.floor(this.padding.top + chartAreaHeight);
+
+        const boxH = 18;
+        const minGap = 2;
+        const candidates = alertLevels
+            .map(({ line, index }) => ({
+                index,
+                price: line.price,
+                y: this.priceToY(line.price)
+            }))
+            .filter(l => Number.isFinite(l.y) && l.y >= minY && l.y <= maxY)
+            .sort((a, b) => a.y - b.y);
+
+        if (candidates.length === 0) return;
+
+        let prevCenterY = -Infinity;
+        const levels = candidates.map(l => {
+            let centerY = Math.max(minY + boxH / 2, Math.min(maxY - boxH / 2, l.y));
+            if (centerY - prevCenterY < boxH + minGap) centerY = prevCenterY + boxH + minGap;
+            centerY = Math.min(centerY, maxY - boxH / 2);
+            prevCenterY = centerY;
+            return { ...l, centerY };
+        });
+
+        this.ctx.save();
+        this.ctx.setLineDash([]);
+        this.ctx.font = '11px sans-serif';
+        this.ctx.textAlign = 'left';
+        this.ctx.textBaseline = 'middle';
+        levels.forEach(({ index, price, centerY }) => {
+            const selected = this.selectedDrawing?.type === 'ray' && this.selectedDrawing?.index === index;
+            const color = selected ? '#ffa726' : '#ff9800';
+            const label = this.formatPrice(price);
+            const padX = 6;
+            const textW = this.ctx.measureText(label).width;
+            const boxW = textW + padX * 2;
+            const boxX = this.logicalWidth - this.padding.right + 2;
+            const boxY = centerY - boxH / 2;
+            this.ctx.fillStyle = color;
+            this.ctx.fillRect(boxX, boxY, boxW, boxH);
+            this.ctx.fillStyle = '#fff';
+            this.ctx.fillText(label, boxX + padX, centerY);
+        });
         this.ctx.restore();
     }
     
@@ -3396,6 +3453,7 @@ class CandlestickChart {
         const enabled = !!this.valuesConfig?.density?.enabled;
         if (!enabled) {
             this.densityData = null;
+            this.densityAppearance = { bid: null, ask: null };
             return;
         }
         const ticker = (this.symbol || 'BTCUSDT').toUpperCase();
@@ -3404,6 +3462,7 @@ class CandlestickChart {
         const dailyVolume = await this.fetchDailyVolumeQuote(exchange, ticker, market);
         if (!dailyVolume || dailyVolume <= 0) {
             this.densityData = null;
+            this.densityAppearance = { bid: null, ask: null };
             this.draw();
             return;
         }
@@ -3419,16 +3478,42 @@ class CandlestickChart {
             }
             const response = await fetch(endpoint);
             const data = await response.json();
-            this.densityData = this.processOrderBookData(
+            const rawDensityData = this.processOrderBookData(
                 data,
                 dailyVolume,
                 this.densityVolumePercentage,
                 exchange,
                 market
             );
+            if (!rawDensityData) {
+                this.densityData = null;
+                this.densityAppearance = { bid: null, ask: null };
+            } else {
+                const nowTs = Date.now();
+                const mergeDensityBySide = (density, side) => {
+                    if (!density || !Number.isFinite(density.price) || density.price <= 0) {
+                        this.densityAppearance[side] = null;
+                        return null;
+                    }
+                    const prev = this.densityAppearance[side];
+                    let firstSeenTime = nowTs;
+                    if (prev && Number.isFinite(prev.price) && prev.price > 0 && Number.isFinite(prev.firstSeenTime)) {
+                        const diffPct = Math.abs(density.price - prev.price) / prev.price * 100;
+                        if (diffPct <= this.densityMatchTolerancePct) firstSeenTime = prev.firstSeenTime;
+                    }
+                    this.densityAppearance[side] = { price: density.price, firstSeenTime };
+                    return { ...density, firstSeenTime };
+                };
+                this.densityData = {
+                    ...rawDensityData,
+                    bidDensity: mergeDensityBySide(rawDensityData.bidDensity, 'bid'),
+                    askDensity: mergeDensityBySide(rawDensityData.askDensity, 'ask')
+                };
+            }
         } catch (error) {
             console.error('Error fetching density data:', error);
             this.densityData = null;
+            this.densityAppearance = { bid: null, ask: null };
         }
         this.draw();
     }
@@ -3458,13 +3543,23 @@ class CandlestickChart {
             Number.isFinite(this.densityData.askDensity.price) &&
             Number.isFinite(this.densityData.askDensity.size) &&
             this.densityData.askDensity.size > 0) {
-            levels.push({ side: 'ask', price: this.densityData.askDensity.price, size: this.densityData.askDensity.size });
+            levels.push({
+                side: 'ask',
+                price: this.densityData.askDensity.price,
+                size: this.densityData.askDensity.size,
+                firstSeenTime: this.densityData.askDensity.firstSeenTime
+            });
         }
         if (this.densityData.bidDensity?.price != null &&
             Number.isFinite(this.densityData.bidDensity.price) &&
             Number.isFinite(this.densityData.bidDensity.size) &&
             this.densityData.bidDensity.size > 0) {
-            levels.push({ side: 'bid', price: this.densityData.bidDensity.price, size: this.densityData.bidDensity.size });
+            levels.push({
+                side: 'bid',
+                price: this.densityData.bidDensity.price,
+                size: this.densityData.bidDensity.size,
+                firstSeenTime: this.densityData.bidDensity.firstSeenTime
+            });
         }
         if (levels.length === 0) return;
         const mmEnabled = !!this.valuesConfig?.density?.mmEnabled;
@@ -3487,8 +3582,6 @@ class CandlestickChart {
         const minY = Math.ceil(this.padding.top);
         const maxX = Math.floor(this.logicalWidth - this.padding.right);
         const maxY = Math.floor(this.padding.top + chartAreaHeight);
-        const anchorX = Math.max(minX, Math.min(maxX, this.timeToX(this.endTime)));
-
         const formatSize = (n) => {
             if (!Number.isFinite(n)) return '0';
             if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, '') + 'B';
@@ -3529,18 +3622,22 @@ class CandlestickChart {
         this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
         this.ctx.clip();
         this.ctx.strokeStyle = this.valuesConfig?.density?.color || '#ff5252';
-        this.ctx.lineWidth = 1.5;
+        this.ctx.lineWidth = 0.6;
         this.ctx.setLineDash([7, 5]);
         for (const level of visibleLevels) {
             const y = level.y;
+            const rawStartX = Number.isFinite(level.firstSeenTime)
+                ? this.timeToX(level.firstSeenTime)
+                : this.timeToX(this.endTime);
+            const startX = Math.max(minX, Math.min(maxX, rawStartX));
             this.ctx.beginPath();
-            this.ctx.moveTo(anchorX, y);
+            this.ctx.moveTo(startX, y);
             this.ctx.lineTo(maxX, y);
             this.ctx.stroke();
             this.ctx.setLineDash([]);
             this.ctx.fillStyle = this.valuesConfig?.density?.color || '#ff5252';
             this.ctx.beginPath();
-            this.ctx.arc(anchorX, y, 2.2, 0, Math.PI * 2);
+            this.ctx.arc(startX, y, 2.2, 0, Math.PI * 2);
             this.ctx.fill();
             this.ctx.setLineDash([7, 5]);
         }
@@ -3716,6 +3813,7 @@ class CandlestickChart {
             }
             this.drawYAxis();
             this.drawLivePriceLine();
+            this.drawAlertPriceLabels();
             this.drawXAxis();
             // Crosshair labels must be above axis labels.
             this.drawCrosshair();
@@ -4023,6 +4121,7 @@ function setupValuesModal(chart) {
         else {
             chart.stopDensityUpdates();
             chart.densityData = null;
+            chart.densityAppearance = { bid: null, ask: null };
         }
         chart.draw();
         closeModal();
@@ -4038,6 +4137,7 @@ function setupValuesModal(chart) {
         chart.densityAnomalyMultiplier = 10;
         chart.stopDensityUpdates();
         chart.densityData = null;
+        chart.densityAppearance = { bid: null, ask: null };
         chart.draw();
     }
 
