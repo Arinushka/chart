@@ -415,6 +415,14 @@ body {
     position: relative;
 }
 
+#indicatorsModal .indicators-modal-content {
+    width: min(520px, calc(100vw - 24px));
+    height: min(560px, calc(100vh - 24px));
+    min-width: 0;
+    max-width: 90vw;
+    max-height: 85vh;
+}
+
 .indicators-modal-close {
     position: absolute;
     top: 12px;
@@ -572,6 +580,8 @@ body {
     font-weight: 500;
     color: #fff;
     margin-bottom: 16px;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .ma-config {
@@ -715,7 +725,8 @@ body {
 
 .indicator-param-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
+    flex-wrap: wrap;
     gap: 10px;
     font-size: 13px;
     color: #ccc;
@@ -723,6 +734,8 @@ body {
 
 .indicator-param-row label {
     min-width: 80px;
+    white-space: normal;
+    overflow-wrap: anywhere;
 }
 
 .sub-macd-hist-label {

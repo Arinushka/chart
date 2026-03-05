@@ -4071,36 +4071,54 @@ function setupIndicatorsModal(chart) {
     const mainConfig = document.getElementById('mainIndicatorsConfig');
     const subConfig = document.getElementById('subIndicatorsConfig');
     const subConfigTitle = document.getElementById('subIndicatorsConfigTitle');
+    const mainList = mainContent?.querySelector('.indicators-list');
+    const subList = subContent?.querySelector('.indicators-list');
     const getMainListCheckbox = (indicatorId) => modal.querySelector(`.indicator-item[data-indicator="${indicatorId}"] input[type="checkbox"]`);
     const isMainListEnabled = (indicatorId) => !!getMainListCheckbox(indicatorId)?.checked;
     const setMainListEnabled = (indicatorId, enabled) => {
         const cb = getMainListCheckbox(indicatorId);
         if (cb) cb.checked = !!enabled;
     };
+    const clearSelection = () => {
+        modal.querySelectorAll('.indicator-item[data-indicator], .sub-indicator-item').forEach(i => i.classList.remove('selected'));
+    };
+    const showSubPanelForId = (subId) => {
+        if (mainConfig) mainConfig.style.display = 'none';
+        if (subConfig) subConfig.style.display = '';
+        subConfig?.querySelectorAll('.sub-indicator-panel').forEach(panel => {
+            panel.style.display = (panel.id === subPanelIds[subId]) ? '' : 'none';
+        });
+        if (subConfigTitle) subConfigTitle.textContent = subTitles[subId] || subId;
+    };
+
+    // Merge main and sub lists into a single indicator section.
+    if (!modal.dataset.indicatorsUnified && mainList && subList) {
+        const mainTitleEl = mainList.querySelector('.indicators-list-title');
+        if (mainTitleEl) mainTitleEl.textContent = 'Индикаторы';
+        const subTitleEl = subList.querySelector('.indicators-list-title');
+        if (subTitleEl) subTitleEl.remove();
+        const subItems = Array.from(subList.querySelectorAll('.sub-indicator-item'));
+        subItems.forEach(item => mainList.appendChild(item));
+        if (subConfig && mainContent && subConfig.parentElement !== mainContent) {
+            mainContent.appendChild(subConfig);
+        }
+        modal.dataset.indicatorsUnified = '1';
+    }
     
     function openModal() {
         modal.classList.add('open');
         syncModalFromChart();
-        const activeTab = modal.querySelector('.indicators-tab.active');
-        const tabName = activeTab ? activeTab.getAttribute('data-tab') : 'main';
-        if (tabName === 'sub') {
-            if (mainContent) mainContent.style.display = 'none';
-            if (subContent) subContent.style.display = 'flex';
-            const subSelected = modal.querySelector('.sub-indicator-item.selected');
-            const subId = subSelected ? (subSelected.getAttribute('data-sub') || subSelected.querySelector('input')?.value) : 'VOL';
-            subConfig?.querySelectorAll('.sub-indicator-panel').forEach(panel => {
-                panel.style.display = (panel.id === subPanelIds[subId]) ? '' : 'none';
-            });
-            if (subConfigTitle) subConfigTitle.textContent = subTitles[subId] || subId;
-        } else {
-            if (mainContent) mainContent.style.display = 'flex';
-            if (subContent) subContent.style.display = 'none';
-            const selected = modal.querySelector('.indicator-item.selected');
-            const id = selected ? (selected.getAttribute('data-indicator') || selected.querySelector('input')?.value) : 'MA';
-            mainConfig?.querySelectorAll('.indicator-config-panel').forEach(panel => {
-                if (!panel.classList.contains('sub-indicator-panel')) panel.style.display = (panel.id === panelIds[id]) ? '' : 'none';
-            });
+        if (mainContent) mainContent.style.display = 'flex';
+        if (subContent) subContent.style.display = 'none';
+        const subSelected = modal.querySelector('.sub-indicator-item.selected');
+        if (subSelected) {
+            const subId = subSelected.getAttribute('data-sub') || subSelected.querySelector('input')?.value || 'VOL';
+            showSubPanelForId(subId);
+            return;
         }
+        const selected = modal.querySelector('.indicator-item.selected');
+        const id = selected ? (selected.getAttribute('data-indicator') || selected.querySelector('input')?.value) : 'MA';
+        showPanelForIndicator(id);
     }
     
     function closeModal() {
@@ -4759,24 +4777,16 @@ function setupIndicatorsModal(chart) {
         tab.addEventListener('click', () => {
             tabs.forEach(t => t.classList.remove('active'));
             tab.classList.add('active');
-            const tabName = tab.getAttribute('data-tab');
-            if (tabName === 'sub') {
-                if (mainContent) mainContent.style.display = 'none';
-                if (subContent) subContent.style.display = 'flex';
-                const subSelected = document.querySelector('.sub-indicator-item.selected');
-                const subId = subSelected ? (subSelected.getAttribute('data-sub') || subSelected.querySelector('input')?.value) : 'VOL';
-                subConfig?.querySelectorAll('.sub-indicator-panel').forEach(panel => {
-                    panel.style.display = (panel.id === subPanelIds[subId]) ? '' : 'none';
-                });
-                if (subConfigTitle) subConfigTitle.textContent = subTitles[subId] || subId;
+            if (mainContent) mainContent.style.display = 'flex';
+            if (subContent) subContent.style.display = 'none';
+            const subSelected = modal.querySelector('.sub-indicator-item.selected');
+            if (subSelected) {
+                const subId = subSelected.getAttribute('data-sub') || subSelected.querySelector('input')?.value || 'VOL';
+                showSubPanelForId(subId);
             } else {
-                if (mainContent) mainContent.style.display = 'flex';
-                if (subContent) subContent.style.display = 'none';
-                const selected = document.querySelector('.indicator-item.selected');
+                const selected = modal.querySelector('.indicator-item.selected');
                 const id = selected ? (selected.getAttribute('data-indicator') || selected.querySelector('input')?.value) : 'MA';
-                mainConfig?.querySelectorAll('.indicator-config-panel').forEach(panel => {
-                    if (!panel.classList.contains('sub-indicator-panel')) panel.style.display = (panel.id === panelIds[id]) ? '' : 'none';
-                });
+                showPanelForIndicator(id);
             }
         });
     });
@@ -4791,19 +4801,18 @@ function setupIndicatorsModal(chart) {
                 if (Array.isArray(en)) en.forEach(id => { const el = document.getElementById(id); if (el) el.checked = checked; });
                 else if (en) { const el = document.getElementById(en); if (el) el.checked = checked; }
             }
-            document.querySelectorAll('.sub-indicator-item').forEach(i => i.classList.remove('selected'));
+            clearSelection();
             item.classList.add('selected');
             const subId = item.getAttribute('data-sub') || item.querySelector('input')?.value || 'VOL';
-            subConfig?.querySelectorAll('.sub-indicator-panel').forEach(panel => {
-                panel.style.display = (panel.id === subPanelIds[subId]) ? '' : 'none';
-            });
-            if (subConfigTitle) subConfigTitle.textContent = subTitles[subId] || subId;
+            showSubPanelForId(subId);
         });
     });
     
     const titles = { MA: 'MA - Средняя скользящая', EMA: 'EMA - Экспоненциальная средняя', WMA: 'WMA - Взвешенная средняя', BOLL: 'BOLL - Полосы Боллинджера', VWAP: 'VWAP', MACD: 'MACD - Схождение/расхождение скользящих', RSI: 'RSI - Индекс относительной силы', TRIX: 'TRIX - Тройная экспоненциальная средняя', SUPER: 'SUPER - SuperTrend', SAR: 'SAR - Parabolic SAR' };
     
     function showPanelForIndicator(id) {
+        if (mainConfig) mainConfig.style.display = '';
+        if (subConfig) subConfig.style.display = 'none';
         mainConfig?.querySelectorAll('.indicator-config-panel').forEach(panel => {
             if (!panel.classList.contains('sub-indicator-panel')) {
                 panel.style.display = (panel.id === panelIds[id]) ? '' : 'none';
@@ -4815,7 +4824,7 @@ function setupIndicatorsModal(chart) {
     
     modal.querySelectorAll('.indicator-item[data-indicator]').forEach(item => {
         item.addEventListener('click', (e) => {
-            modal.querySelectorAll('.indicator-item[data-indicator]').forEach(i => i.classList.remove('selected'));
+            clearSelection();
             item.classList.add('selected');
             const id = item.getAttribute('data-indicator') || item.querySelector('input')?.value || 'MA';
             showPanelForIndicator(id);
