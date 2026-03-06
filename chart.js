@@ -55,7 +55,7 @@ class CandlestickChart {
         // Drawing mode state
         this.drawingMode = false;
         this.horizontalLineMode = false;
-        this.alertMode = false; // Alert: один клик — прерывистый луч от точки до конца графика
+        this.alertMode = false; // Alert: один клик — горизонтальная прерывистая линия
         this.rectangleMode = false;
         this.rulerMode = false;
         this.drawnLines = []; // Array to store drawn lines (brush tool)
@@ -69,6 +69,21 @@ class CandlestickChart {
         this.drawingsVisible = true; // Toggle visibility of all drawn elements (lines, rectangles, ruler, etc.)
         this.selectedDrawing = null; // { type: 'line'|'rect'|'ray'|'ruler', index: number } — выделенный элемент для удаления по Delete/Backspace
         this.draggedDrawing = null; // { type, index, startX, startY, origin }
+        this.lineAlerts = []; // Runtime alerts attached to drawn lines/rays
+        this.lineAlertCheckTimer = null;
+        this.lineAlertCheckIntervalMs = 1000;
+        this.drawingAlertMenuEl = null;
+        this.drawingAlertMenuSelectEl = null;
+        this.drawingAlertMenuAddBtnEl = null;
+        this.drawingAlertMenuTarget = null;
+        this.alarmIconReady = false;
+        this.alarmIconTintCache = new Map();
+        this.alarmIcon = new Image();
+        this.alarmIcon.src = 'alarm.svg';
+        this.alarmIcon.onload = () => {
+            this.alarmIconReady = true;
+            this.draw();
+        };
         
         // Panning state
         this.isPanning = false;
@@ -147,6 +162,8 @@ class CandlestickChart {
         
         // Контекстное меню «Сбросить масштаб» по правому клику
         this.setupResetZoomContextMenu();
+        this.setupDrawingAlertContextMenu();
+        this.startLineAlertChecker();
         
         // Сразу показываем биржу — источник данных (как на первом скриншоте)
         const exchangeEl = document.getElementById('exchangeName');
@@ -161,6 +178,15 @@ class CandlestickChart {
         const symbol = String(symbolOverride || this.symbol || 'BTCUSDT').toUpperCase();
         const market = String(this.market || 'spot').toLowerCase();
         return `${this.drawingsStoragePrefix}:${market}:${symbol}`;
+    }
+
+    generateDrawingId(prefix = 'd') {
+        return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
+    }
+
+    normalizeDrawingId(rawId, prefix = 'd') {
+        const id = String(rawId || '').trim();
+        return id ? id : this.generateDrawingId(prefix);
     }
 
     serializeDrawingsForStorage() {
@@ -183,13 +209,19 @@ class CandlestickChart {
             const time2 = toFiniteNumber(line?.time2);
             const price2 = toFiniteNumber(line?.price2);
             if (time1 === null || price1 === null || time2 === null || price2 === null) return null;
-            return { time1, price1, time2, price2 };
+            return { id: this.normalizeDrawingId(line?.id, 'line'), time1, price1, time2, price2 };
         };
         const sanitizeRay = (line) => {
             const time1 = toFiniteNumber(line?.time1);
+            const time2 = toFiniteNumber(line?.time2);
+            const price1 = toFiniteNumber(line?.price1);
+            const price2 = toFiniteNumber(line?.price2);
+            if (time1 !== null && time2 !== null && price1 !== null && price2 !== null) {
+                return { id: this.normalizeDrawingId(line?.id, 'ray'), time1, price1, time2, price2, alert: !!line?.alert };
+            }
             const price = toFiniteNumber(line?.price);
             if (time1 === null || price === null) return null;
-            return { time1, price, alert: !!line?.alert };
+            return { id: this.normalizeDrawingId(line?.id, 'ray'), time1, price, alert: !!line?.alert };
         };
         const sanitizeRect = (rect) => {
             const time1 = toFiniteNumber(rect?.time1);
@@ -197,7 +229,7 @@ class CandlestickChart {
             const time2 = toFiniteNumber(rect?.time2);
             const price2 = toFiniteNumber(rect?.price2);
             if (time1 === null || price1 === null || time2 === null || price2 === null) return null;
-            return { time1, price1, time2, price2 };
+            return { id: this.normalizeDrawingId(rect?.id, 'rect'), time1, price1, time2, price2 };
         };
         const sanitizeRuler = (selection) => {
             const time1 = toFiniteNumber(selection?.time1);
@@ -213,12 +245,31 @@ class CandlestickChart {
                 summary: normalizeSummary(selection?.summary)
             };
         };
+        const sanitizeRuntimeAlert = (alertItem) => {
+            const targetId = String(alertItem?.targetId || '').trim();
+            const targetType = String(alertItem?.targetType || '').trim();
+            if (!targetId || !['line', 'ray', 'rect'].includes(targetType)) return null;
+            const condition = String(alertItem?.condition || '');
+            const status = String(alertItem?.status || '');
+            const lastCheckedCandleTime = toFiniteNumber(alertItem?.lastCheckedCandleTime);
+            const triggeredAt = toFiniteNumber(alertItem?.triggeredAt);
+            return {
+                id: this.normalizeDrawingId(alertItem?.id, 'line_alert'),
+                targetType,
+                targetId,
+                condition: condition || (targetType === 'rect' ? 'rect_crossing' : 'crossing'),
+                status: ['active', 'triggered', 'cancelled'].includes(status) ? status : 'active',
+                lastCheckedCandleTime,
+                triggeredAt
+            };
+        };
 
         return {
             drawnLines: this.drawnLines.map(sanitizeLine).filter(Boolean),
             horizontalLines: this.horizontalLines.map(sanitizeRay).filter(Boolean),
             rectangles: this.rectangles.map(sanitizeRect).filter(Boolean),
-            rulerSelections: this.rulerSelections.map(sanitizeRuler).filter(Boolean)
+            rulerSelections: this.rulerSelections.map(sanitizeRuler).filter(Boolean),
+            lineAlerts: this.lineAlerts.map(sanitizeRuntimeAlert).filter(Boolean)
         };
     }
 
@@ -226,7 +277,7 @@ class CandlestickChart {
         try {
             const key = this.getDrawingsStorageKey();
             const payload = this.serializeDrawingsForStorage();
-            if (!payload.drawnLines.length && !payload.horizontalLines.length && !payload.rectangles.length && !payload.rulerSelections.length) {
+            if (!payload.drawnLines.length && !payload.horizontalLines.length && !payload.rectangles.length && !payload.rulerSelections.length && !payload.lineAlerts.length) {
                 localStorage.removeItem(key);
                 return;
             }
@@ -245,6 +296,7 @@ class CandlestickChart {
                 this.horizontalLines = [];
                 this.rectangles = [];
                 this.rulerSelections = [];
+                this.lineAlerts = [];
                 return;
             }
             const parsed = JSON.parse(raw);
@@ -255,25 +307,50 @@ class CandlestickChart {
                 Number.isFinite(item?.time2) &&
                 Number.isFinite(item?.price2)
             ).map(item => ({
+                id: this.normalizeDrawingId(item.id, 'line'),
                 time1: Number(item.time1),
                 price1: Number(item.price1),
                 time2: Number(item.time2),
                 price2: Number(item.price2)
             })) : [];
-            this.horizontalLines = Array.isArray(data.horizontalLines) ? data.horizontalLines.filter(item =>
-                Number.isFinite(item?.time1) &&
-                Number.isFinite(item?.price)
-            ).map(item => ({
-                time1: Number(item.time1),
-                price: Number(item.price),
-                alert: !!item.alert
-            })) : [];
+            this.horizontalLines = Array.isArray(data.horizontalLines) ? data.horizontalLines.filter(item => {
+                const hasTrend = Number.isFinite(item?.time1) &&
+                    Number.isFinite(item?.price1) &&
+                    Number.isFinite(item?.time2) &&
+                    Number.isFinite(item?.price2);
+                const hasHorizontal = Number.isFinite(item?.time1) &&
+                    Number.isFinite(item?.price);
+                return hasTrend || hasHorizontal;
+            }).map(item => {
+                if (
+                    Number.isFinite(item?.time1) &&
+                    Number.isFinite(item?.price1) &&
+                    Number.isFinite(item?.time2) &&
+                    Number.isFinite(item?.price2)
+                ) {
+                    return {
+                        id: this.normalizeDrawingId(item.id, 'ray'),
+                        time1: Number(item.time1),
+                        price1: Number(item.price1),
+                        time2: Number(item.time2),
+                        price2: Number(item.price2),
+                        alert: !!item.alert
+                    };
+                }
+                return {
+                    id: this.normalizeDrawingId(item.id, 'ray'),
+                    time1: Number(item.time1),
+                    price: Number(item.price),
+                    alert: !!item.alert
+                };
+            }) : [];
             this.rectangles = Array.isArray(data.rectangles) ? data.rectangles.filter(item =>
                 Number.isFinite(item?.time1) &&
                 Number.isFinite(item?.price1) &&
                 Number.isFinite(item?.time2) &&
                 Number.isFinite(item?.price2)
             ).map(item => ({
+                id: this.normalizeDrawingId(item.id, 'rect'),
                 time1: Number(item.time1),
                 price1: Number(item.price1),
                 time2: Number(item.time2),
@@ -291,12 +368,26 @@ class CandlestickChart {
                 price2: Number(item.price2),
                 summary: (item.summary && typeof item.summary === 'object') ? item.summary : null
             })) : [];
+            this.lineAlerts = Array.isArray(data.lineAlerts) ? data.lineAlerts.filter(item => {
+                const targetId = String(item?.targetId || '').trim();
+                const targetType = String(item?.targetType || '').trim();
+                return !!targetId && ['line', 'ray', 'rect'].includes(targetType);
+            }).map(item => ({
+                id: this.normalizeDrawingId(item.id, 'line_alert'),
+                targetType: String(item.targetType),
+                targetId: String(item.targetId),
+                condition: String(item.condition || (item.targetType === 'rect' ? 'rect_crossing' : 'crossing')),
+                status: ['active', 'triggered', 'cancelled'].includes(String(item.status)) ? String(item.status) : 'active',
+                lastCheckedCandleTime: Number.isFinite(Number(item.lastCheckedCandleTime)) ? Number(item.lastCheckedCandleTime) : null,
+                triggeredAt: Number.isFinite(Number(item.triggeredAt)) ? Number(item.triggeredAt) : null
+            })) : [];
         } catch (error) {
             console.warn('Failed to load drawings from localStorage:', error);
             this.drawnLines = [];
             this.horizontalLines = [];
             this.rectangles = [];
             this.rulerSelections = [];
+            this.lineAlerts = [];
         }
     }
 
@@ -380,6 +471,320 @@ class CandlestickChart {
     
     hideResetZoomButton() {
         if (this.resetZoomBtnEl) this.resetZoomBtnEl.style.display = 'none';
+    }
+
+    setupDrawingAlertContextMenu() {
+        const menu = document.createElement('div');
+        menu.style.position = 'fixed';
+        menu.style.zIndex = '10000';
+        menu.style.display = 'none';
+        menu.style.background = '#1f1f1f';
+        menu.style.border = '1px solid #3a3a3a';
+        menu.style.borderRadius = '8px';
+        menu.style.padding = '10px';
+        menu.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.35)';
+        menu.style.minWidth = '280px';
+
+        const row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.alignItems = 'center';
+        row.style.gap = '8px';
+
+        const select = document.createElement('select');
+        select.innerHTML = [
+            '<option value="crossing">пересечение</option>',
+            '<option value="close_above">закрытие свечи выше</option>',
+            '<option value="close_below">закрытие свечи ниже</option>'
+        ].join('');
+        select.value = 'crossing';
+        select.style.flex = '1';
+        select.style.height = '32px';
+        select.style.background = '#2a2a2a';
+        select.style.color = '#e8e8e8';
+        select.style.border = '1px solid #4a4a4a';
+        select.style.borderRadius = '6px';
+        select.style.padding = '0 8px';
+
+        const addBtn = document.createElement('button');
+        addBtn.type = 'button';
+        addBtn.style.display = 'inline-flex';
+        addBtn.style.alignItems = 'center';
+        addBtn.style.gap = '6px';
+        addBtn.style.height = '32px';
+        addBtn.style.padding = '0 10px';
+        addBtn.style.background = '#ff9800';
+        addBtn.style.color = '#111';
+        addBtn.style.border = 'none';
+        addBtn.style.borderRadius = '6px';
+        addBtn.style.cursor = 'pointer';
+        addBtn.innerHTML = '<img src="alarm.svg" alt="" width="16" height="16" style="display:block;filter:grayscale(100%) brightness(0.1);">Добавить оповещение';
+
+        addBtn.addEventListener('click', () => {
+            this.addLineAlertFromMenu();
+        });
+
+        row.appendChild(select);
+        row.appendChild(addBtn);
+        menu.appendChild(row);
+        document.body.appendChild(menu);
+
+        this.drawingAlertMenuEl = menu;
+        this.drawingAlertMenuSelectEl = select;
+        this.drawingAlertMenuAddBtnEl = addBtn;
+
+        document.addEventListener('pointerdown', (e) => {
+            if (!this.drawingAlertMenuEl || this.drawingAlertMenuEl.style.display === 'none') return;
+            if (!this.drawingAlertMenuEl.contains(e.target)) this.hideDrawingAlertContextMenu();
+        });
+        window.addEventListener('resize', () => this.hideDrawingAlertContextMenu());
+        window.addEventListener('scroll', () => this.hideDrawingAlertContextMenu(), true);
+    }
+
+    showDrawingAlertContextMenu(clientX, clientY, hit) {
+        if (!this.drawingAlertMenuEl || !this.drawingAlertMenuSelectEl || !this.drawingAlertMenuAddBtnEl) return;
+        this.drawingAlertMenuTarget = hit;
+        this.drawingAlertMenuSelectEl.value = 'crossing';
+        const isRect = hit?.type === 'rect';
+        this.drawingAlertMenuSelectEl.style.display = isRect ? 'none' : 'block';
+        this.drawingAlertMenuAddBtnEl.style.width = isRect ? '100%' : 'auto';
+        this.drawingAlertMenuEl.style.display = 'block';
+
+        const margin = 8;
+        const menuRect = this.drawingAlertMenuEl.getBoundingClientRect();
+        const maxX = window.innerWidth - menuRect.width - margin;
+        const maxY = window.innerHeight - menuRect.height - margin;
+        const left = Math.max(margin, Math.min(maxX, clientX + 6));
+        const top = Math.max(margin, Math.min(maxY, clientY + 6));
+        this.drawingAlertMenuEl.style.left = `${left}px`;
+        this.drawingAlertMenuEl.style.top = `${top}px`;
+    }
+
+    hideDrawingAlertContextMenu() {
+        if (!this.drawingAlertMenuEl) return;
+        this.drawingAlertMenuEl.style.display = 'none';
+        this.drawingAlertMenuTarget = null;
+    }
+
+    startLineAlertChecker() {
+        if (this.lineAlertCheckTimer) return;
+        this.lineAlertCheckTimer = setInterval(() => {
+            this.checkLineAlerts();
+        }, this.lineAlertCheckIntervalMs);
+    }
+
+    addLineAlertFromMenu() {
+        const hit = this.drawingAlertMenuTarget;
+        if (!hit || (hit.type !== 'line' && hit.type !== 'ray' && hit.type !== 'rect')) {
+            this.hideDrawingAlertContextMenu();
+            return;
+        }
+        const condition = hit.type === 'rect'
+            ? 'rect_crossing'
+            : (this.drawingAlertMenuSelectEl?.value || 'crossing');
+        const targetRef = hit.type === 'line'
+            ? this.drawnLines[hit.index]
+            : hit.type === 'ray'
+                ? this.horizontalLines[hit.index]
+                : this.rectangles[hit.index];
+        const targetId = targetRef?.id ? String(targetRef.id) : '';
+        if (!targetRef) {
+            this.hideDrawingAlertContextMenu();
+            return;
+        }
+        const hasDuplicate = this.lineAlerts.some(item =>
+            item.status === 'active' &&
+            item.targetType === hit.type &&
+            item.targetId === targetId &&
+            item.condition === condition
+        );
+        if (!hasDuplicate) {
+            this.lineAlerts.push({
+                id: `line_alert_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+                targetType: hit.type,
+                targetId,
+                condition,
+                status: 'active',
+                lastCheckedCandleTime: this.getLatestClosedCandleTime(),
+                triggeredAt: null
+            });
+            this.saveDrawingsToStorage();
+        }
+        this.hideDrawingAlertContextMenu();
+        this.draw();
+    }
+
+    getLatestClosedCandleTime() {
+        if (!Array.isArray(this.candles) || this.candles.length === 0) return null;
+        const intervalMs = this.getIntervalMs(this.interval);
+        const now = Date.now();
+        for (let i = this.candles.length - 1; i >= 0; i--) {
+            const candle = this.candles[i];
+            if (!candle || !Number.isFinite(candle.time)) continue;
+            const closed = (i < this.candles.length - 1) || !Number.isFinite(intervalMs) || now >= candle.time + intervalMs;
+            if (closed) return candle.time;
+        }
+        return null;
+    }
+
+    isCandleClosedAtIndex(index) {
+        if (!Array.isArray(this.candles) || index < 0 || index >= this.candles.length) return false;
+        if (index < this.candles.length - 1) return true;
+        const candle = this.candles[index];
+        const intervalMs = this.getIntervalMs(this.interval);
+        if (!Number.isFinite(intervalMs) || intervalMs <= 0 || !candle) return false;
+        return Date.now() >= candle.time + intervalMs;
+    }
+
+    getDrawingByTarget(targetType, targetId) {
+        if (!targetId) return null;
+        if (targetType === 'line') return this.drawnLines.find(item => item?.id === targetId) || null;
+        if (targetType === 'ray') return this.horizontalLines.find(item => item?.id === targetId) || null;
+        if (targetType === 'rect') return this.rectangles.find(item => item?.id === targetId) || null;
+        return null;
+    }
+
+    getDrawingPriceAtTime(targetType, targetRef, candleTime) {
+        if (!targetRef || !Number.isFinite(candleTime)) return null;
+
+        const lerpPrice = (t1, p1, t2, p2, t) => {
+            if (!Number.isFinite(t1) || !Number.isFinite(p1) || !Number.isFinite(t2) || !Number.isFinite(p2)) return null;
+            if (Math.abs(t2 - t1) < 1e-9) return p1;
+            const ratio = (t - t1) / (t2 - t1);
+            return p1 + (p2 - p1) * ratio;
+        };
+
+        if (targetType === 'line') {
+            if (!(Number.isFinite(targetRef.time1) && Number.isFinite(targetRef.time2) && Number.isFinite(targetRef.price1) && Number.isFinite(targetRef.price2))) {
+                return null;
+            }
+            const minT = Math.min(targetRef.time1, targetRef.time2);
+            const maxT = Math.max(targetRef.time1, targetRef.time2);
+            if (candleTime < minT || candleTime > maxT) return null;
+            return lerpPrice(targetRef.time1, targetRef.price1, targetRef.time2, targetRef.price2, candleTime);
+        }
+
+        if (targetType === 'ray') {
+            if (Number.isFinite(targetRef.time1) && Number.isFinite(targetRef.price)) {
+                if (targetRef.alert) return targetRef.price;
+                if (candleTime < targetRef.time1) return null;
+                return targetRef.price;
+            }
+            if (Number.isFinite(targetRef.time1) && Number.isFinite(targetRef.time2) && Number.isFinite(targetRef.price1) && Number.isFinite(targetRef.price2)) {
+                if (!targetRef.alert) {
+                    const minT = Math.min(targetRef.time1, targetRef.time2);
+                    const maxT = Math.max(targetRef.time1, targetRef.time2);
+                    if (candleTime < minT || candleTime > maxT) return null;
+                }
+                return lerpPrice(targetRef.time1, targetRef.price1, targetRef.time2, targetRef.price2, candleTime);
+            }
+        }
+
+        return null;
+    }
+
+    isLineAlertConditionMet(condition, candle, linePrice) {
+        if (!candle || !Number.isFinite(linePrice)) return false;
+        if (condition === 'close_above') return Number(candle.close) > linePrice;
+        if (condition === 'close_below') return Number(candle.close) < linePrice;
+        // crossing (default)
+        return Number(candle.low) <= linePrice && Number(candle.high) >= linePrice;
+    }
+
+    sendGraphPriceAlert(ticker, price) {
+        const numericPrice = Number(price);
+        if (!ticker || !Number.isFinite(numericPrice)) return;
+        const body = new URLSearchParams({
+            ticker: String(ticker),
+            price: String(numericPrice)
+        });
+        fetch('/handlers/graph-price.php', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8'
+            },
+            body
+        }).catch((error) => {
+            console.warn('Failed to send graph-price alert POST:', error);
+        });
+    }
+
+    checkLineAlerts() {
+        if (!Array.isArray(this.lineAlerts) || this.lineAlerts.length === 0 || !Array.isArray(this.candles) || this.candles.length === 0) {
+            return;
+        }
+
+        let needsRedraw = false;
+        let needsPersist = false;
+        this.lineAlerts.forEach(item => {
+            if (!item || item.status !== 'active') return;
+
+            const targetRef = this.getDrawingByTarget(item.targetType, item.targetId);
+            if (!targetRef) {
+                item.status = 'cancelled';
+                needsRedraw = true;
+                needsPersist = true;
+                return;
+            }
+
+            for (let i = 0; i < this.candles.length; i++) {
+                const candle = this.candles[i];
+                if (!candle || !Number.isFinite(candle.time)) continue;
+                if (item.lastCheckedCandleTime != null && candle.time <= item.lastCheckedCandleTime) continue;
+                if (!this.isCandleClosedAtIndex(i)) continue;
+
+                item.lastCheckedCandleTime = candle.time;
+                let isTriggered = false;
+                let triggerPrice = null;
+                if (item.targetType === 'rect') {
+                    const rect = targetRef;
+                    if (Number.isFinite(rect?.time1) && Number.isFinite(rect?.time2) && Number.isFinite(rect?.price1) && Number.isFinite(rect?.price2)) {
+                        const minTime = Math.min(rect.time1, rect.time2);
+                        const maxTime = Math.max(rect.time1, rect.time2);
+                        const minPrice = Math.min(rect.price1, rect.price2);
+                        const maxPrice = Math.max(rect.price1, rect.price2);
+                        if (candle.time >= minTime && candle.time <= maxTime) {
+                            isTriggered = Number(candle.high) >= minPrice && Number(candle.low) <= maxPrice;
+                            if (isTriggered) {
+                                if (Number(candle.high) >= maxPrice) triggerPrice = maxPrice;
+                                else if (Number(candle.low) <= minPrice) triggerPrice = minPrice;
+                                else triggerPrice = Number(candle.close);
+                            }
+                        }
+                    }
+                } else {
+                    const linePrice = this.getDrawingPriceAtTime(item.targetType, targetRef, candle.time);
+                    if (Number.isFinite(linePrice)) {
+                        isTriggered = this.isLineAlertConditionMet(item.condition, candle, linePrice);
+                        if (isTriggered) {
+                            triggerPrice = item.condition === 'crossing' ? linePrice : Number(candle.close);
+                        }
+                    }
+                }
+                if (!isTriggered) continue;
+
+                item.status = 'triggered';
+                item.triggeredAt = Date.now();
+                needsRedraw = true;
+                needsPersist = true;
+                this.sendGraphPriceAlert(this.symbol, triggerPrice);
+                try {
+                    const modeLabel = item.targetType === 'rect'
+                        ? 'пересечение границ прямоугольника'
+                        : item.condition === 'close_above'
+                            ? 'закрытие свечи выше'
+                            : item.condition === 'close_below'
+                                ? 'закрытие свечи ниже'
+                                : 'пересечение';
+                    window.alert(`Оповещение сработало (${modeLabel}) для ${this.symbol} ${this.interval}`);
+                } catch (error) {
+                    console.warn('Line alert notification error:', error);
+                }
+                break;
+            }
+        });
+
+        if (needsPersist) this.saveDrawingsToStorage();
+        if (needsRedraw) this.draw();
     }
     
     resetZoomToDefault() {
@@ -559,6 +964,7 @@ class CandlestickChart {
         
         // Mouse click handler
         this.canvas.addEventListener('click', (e) => {
+            this.hideDrawingAlertContextMenu();
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
@@ -610,6 +1016,7 @@ class CandlestickChart {
             // Handle horizontal line mode (сохраняем в координатах графика: время, цена)
             if (this.horizontalLineMode) {
                 this.horizontalLines.push({
+                    id: this.generateDrawingId('ray'),
                     time1: this.xToTime(x),
                     price: this.yToPrice(y)
                 });
@@ -620,9 +1027,10 @@ class CandlestickChart {
                 return;
             }
             
-            // Handle alert mode: прерывистый луч от точки клика до конца графика
+            // Handle alert mode: один клик — горизонтальная прерывистая линия
             if (this.alertMode) {
                 this.horizontalLines.push({
+                    id: this.generateDrawingId('ray'),
                     time1: this.xToTime(x),
                     price: this.yToPrice(y),
                     alert: true
@@ -646,6 +1054,7 @@ class CandlestickChart {
                     this.currentRectangle.x2 = x;
                     this.currentRectangle.y2 = y;
                     this.rectangles.push({
+                        id: this.generateDrawingId('rect'),
                         time1: this.xToTime(this.currentRectangle.x1),
                         price1: this.yToPrice(this.currentRectangle.y1),
                         time2: this.xToTime(this.currentRectangle.x2),
@@ -671,6 +1080,7 @@ class CandlestickChart {
                     this.currentLine.x2 = x;
                     this.currentLine.y2 = y;
                     this.drawnLines.push({
+                        id: this.generateDrawingId('line'),
                         time1: this.xToTime(this.currentLine.x1),
                         price1: this.yToPrice(this.currentLine.y1),
                         time2: this.xToTime(this.currentLine.x2),
@@ -712,6 +1122,7 @@ class CandlestickChart {
         
         // Mouse down: в области осей (слева/снизу) — масштабирование по осям; в области графика — панорамирование
         this.canvas.addEventListener('mousedown', (e) => {
+            if (e.button === 0) this.hideDrawingAlertContextMenu();
             if (!this.drawingMode && !this.horizontalLineMode && !this.alertMode &&
                 !this.rectangleMode && !this.rulerMode) {
                 const rect = this.canvas.getBoundingClientRect();
@@ -835,13 +1246,19 @@ class CandlestickChart {
             const y = e.clientY - rect.top;
             const hit = this.hitTestDrawnElements(x, y);
             if (hit) {
-                if (hit.type === 'line') this.drawnLines.splice(hit.index, 1);
-                else if (hit.type === 'rect') this.rectangles.splice(hit.index, 1);
-                else if (hit.type === 'ray') this.horizontalLines.splice(hit.index, 1);
-                else if (hit.type === 'ruler') this.rulerSelections.splice(hit.index, 1);
+                if (hit.type === 'line' || hit.type === 'ray' || hit.type === 'rect') {
+                    this.selectedDrawing = hit;
+                    this.showDrawingAlertContextMenu(e.clientX, e.clientY, hit);
+                    this.draw();
+                    return;
+                }
+                if (hit.type === 'ruler') this.rulerSelections.splice(hit.index, 1);
                 this.selectedDrawing = null;
                 this.saveDrawingsToStorage();
                 this.draw();
+                this.hideDrawingAlertContextMenu();
+            } else {
+                this.hideDrawingAlertContextMenu();
             }
         });
         
@@ -928,6 +1345,7 @@ class CandlestickChart {
             const ray = this.horizontalLines[hit.index];
             if (!ray) return;
             origin.time1 = ray.time1; origin.price = ray.price;
+            origin.time2 = ray.time2; origin.price1 = ray.price1; origin.price2 = ray.price2;
             origin.x1 = ray.x1; origin.y1 = ray.y1; origin.x2 = ray.x2; origin.y2 = ray.y2;
         } else if (hit.type === 'ruler') {
             const sel = this.rulerSelections[hit.index];
@@ -976,8 +1394,18 @@ class CandlestickChart {
             const ray = this.horizontalLines[d.index];
             if (!ray) return;
             if (hasTimePrice) {
-                ray.time1 = d.origin.time1 + deltaTime;
-                ray.price = d.origin.price + deltaPrice;
+                const isTrendRay = Number.isFinite(d.origin.time2) &&
+                    Number.isFinite(d.origin.price1) &&
+                    Number.isFinite(d.origin.price2);
+                if (isTrendRay) {
+                    ray.time1 = d.origin.time1 + deltaTime;
+                    ray.time2 = d.origin.time2 + deltaTime;
+                    ray.price1 = d.origin.price1 + deltaPrice;
+                    ray.price2 = d.origin.price2 + deltaPrice;
+                } else {
+                    ray.time1 = d.origin.time1 + deltaTime;
+                    ray.price = d.origin.price + deltaPrice;
+                }
             } else {
                 ray.x1 = d.origin.x1 + deltaX; ray.y1 = d.origin.y1 + deltaY;
                 ray.x2 = d.origin.x2 + deltaX; ray.y2 = d.origin.y2 + deltaY;
@@ -1150,6 +1578,9 @@ class CandlestickChart {
     
     hitTestDrawnElements(px, py) {
         const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = this.padding.left;
+        const minY = this.padding.top;
+        const maxY = this.padding.top + chartAreaHeight;
         const maxX = this.logicalWidth - this.padding.right;
         const threshold = 10;
         for (let i = this.rectangles.length - 1; i >= 0; i--) {
@@ -1172,8 +1603,22 @@ class CandlestickChart {
         for (let i = this.horizontalLines.length - 1; i >= 0; i--) {
             const line = this.horizontalLines[i];
             let x1, y1, x2, y2;
-            if (line.time1 != null && line.price != null) {
+            if (line.time1 != null && line.price1 != null && line.time2 != null && line.price2 != null) {
                 x1 = this.timeToX(line.time1);
+                y1 = this.priceToY(line.price1);
+                x2 = this.timeToX(line.time2);
+                y2 = this.priceToY(line.price2);
+                if (line.alert) {
+                    const infiniteClipped = this.getInfiniteLineSegmentInBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
+                    if (infiniteClipped) {
+                        x1 = infiniteClipped.x1;
+                        y1 = infiniteClipped.y1;
+                        x2 = infiniteClipped.x2;
+                        y2 = infiniteClipped.y2;
+                    }
+                }
+            } else if (line.time1 != null && line.price != null) {
+                x1 = line.alert ? minX : this.timeToX(line.time1);
                 y1 = this.priceToY(line.price);
                 x2 = maxX;
                 y2 = y1;
@@ -1220,6 +1665,7 @@ class CandlestickChart {
         this.horizontalLines = [];
         this.rectangles = [];
         this.rulerSelections = [];
+        this.lineAlerts = [];
         this.currentLine = null;
         this.currentRectangle = null;
         this.currentRulerSelection = null;
@@ -2521,9 +2967,26 @@ class CandlestickChart {
         
         return null;
     }
+
+    getInfiniteLineSegmentInBounds(x1, y1, x2, y2, minX, minY, maxX, maxY) {
+        const dx = x2 - x1;
+        const dy = y2 - y1;
+        const len = Math.hypot(dx, dy);
+        if (len < 1e-6) {
+            return this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
+        }
+        const ux = dx / len;
+        const uy = dy / len;
+        const span = (maxX - minX + maxY - minY) * 2;
+        const extX1 = x1 - ux * span;
+        const extY1 = y1 - uy * span;
+        const extX2 = x1 + ux * span;
+        const extY2 = y1 + uy * span;
+        return this.clipLineToBounds(extX1, extY1, extX2, extY2, minX, minY, maxX, maxY);
+    }
     
     drawDrawnLines() {
-        const hasBrushLines = this.drawnLines.length > 0 || (this.currentLine && this.tempPoint);
+        const hasBrushLines = this.drawnLines.length > 0 || (this.drawingMode && this.currentLine && this.tempPoint);
         const hasHorizontalLines = this.horizontalLines.length > 0;
         const hasRectangles = this.rectangles.length > 0 || (this.currentRectangle && this.tempPoint);
         
@@ -2548,17 +3011,31 @@ class CandlestickChart {
         
         this.ctx.setLineDash([]);
         
-        // Draw horizontal rays (обычные и alert — прерывистый луч)
+        // Draw horizontal rays and alert trend lines
         if (hasHorizontalLines) {
             this.horizontalLines.forEach((line, index) => {
                 const selected = this.selectedDrawing?.type === 'ray' && this.selectedDrawing?.index === index;
                 const isAlert = !!line.alert;
                 this.ctx.strokeStyle = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
-                this.ctx.lineWidth = selected ? (isAlert ? 1.2 : 4) : (isAlert ? 0.6 : 2);
-                if (isAlert) this.ctx.setLineDash([8, 4]);
+                this.ctx.lineWidth = selected ? (isAlert ? 1.2 : 4) : 0.6;
+                this.ctx.setLineDash([8, 4]);
                 let x1, y1, x2, y2;
-                if (line.time1 != null && line.price != null) {
+                if (line.time1 != null && line.price1 != null && line.time2 != null && line.price2 != null) {
                     x1 = this.timeToX(line.time1);
+                    y1 = this.priceToY(line.price1);
+                    x2 = this.timeToX(line.time2);
+                    y2 = this.priceToY(line.price2);
+                    if (isAlert) {
+                        const infiniteClipped = this.getInfiniteLineSegmentInBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
+                        if (infiniteClipped) {
+                            x1 = infiniteClipped.x1;
+                            y1 = infiniteClipped.y1;
+                            x2 = infiniteClipped.x2;
+                            y2 = infiniteClipped.y2;
+                        }
+                    }
+                } else if (line.time1 != null && line.price != null) {
+                    x1 = isAlert ? minX : this.timeToX(line.time1);
                     y1 = this.priceToY(line.price);
                     x2 = maxX;
                     y2 = y1;
@@ -2575,8 +3052,8 @@ class CandlestickChart {
                     this.ctx.moveTo(c1x, c1y);
                     this.ctx.lineTo(c2x, c2y);
                     this.ctx.stroke();
-                    if (isAlert) this.ctx.setLineDash([]);
-                    if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
+                    this.ctx.setLineDash([]);
+                    if (!isAlert && x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                         this.ctx.fillStyle = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
                         this.ctx.beginPath();
                         this.ctx.arc(x1, y1, selected ? 5 : 4, 0, Math.PI * 2);
@@ -2585,7 +3062,7 @@ class CandlestickChart {
                 }
             });
         }
-        
+
         // Draw rectangles
         if (hasRectangles) {
             this.ctx.strokeStyle = '#4a9eff';
@@ -2719,7 +3196,7 @@ class CandlestickChart {
             });
             
             // Draw current line being created (with preview)
-            if (this.currentLine && this.tempPoint) {
+            if (this.drawingMode && this.currentLine && this.tempPoint) {
                 // Clip line to chart bounds
                 const clipped = this.clipLineToBounds(this.currentLine.x1, this.currentLine.y1, this.tempPoint.x, this.tempPoint.y, minX, minY, maxX, maxY);
                 if (clipped) {
@@ -2753,6 +3230,123 @@ class CandlestickChart {
             }
         }
         
+        this.ctx.restore();
+    }
+
+    getAlertTargetScreenSegment(targetType, targetRef, minX, minY, maxX, maxY) {
+        if (!targetRef) return null;
+        let x1;
+        let y1;
+        let x2;
+        let y2;
+
+        if (targetType === 'line') {
+            if (!(Number.isFinite(targetRef.time1) && Number.isFinite(targetRef.price1) && Number.isFinite(targetRef.time2) && Number.isFinite(targetRef.price2))) {
+                return null;
+            }
+            x1 = this.timeToX(targetRef.time1);
+            y1 = this.priceToY(targetRef.price1);
+            x2 = this.timeToX(targetRef.time2);
+            y2 = this.priceToY(targetRef.price2);
+            return this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
+        }
+
+        if (targetType === 'ray') {
+            if (Number.isFinite(targetRef.time1) && Number.isFinite(targetRef.price)) {
+                x1 = targetRef.alert ? minX : this.timeToX(targetRef.time1);
+                y1 = this.priceToY(targetRef.price);
+                x2 = maxX;
+                y2 = y1;
+                return this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
+            }
+            if (Number.isFinite(targetRef.time1) && Number.isFinite(targetRef.price1) && Number.isFinite(targetRef.time2) && Number.isFinite(targetRef.price2)) {
+                x1 = this.timeToX(targetRef.time1);
+                y1 = this.priceToY(targetRef.price1);
+                x2 = this.timeToX(targetRef.time2);
+                y2 = this.priceToY(targetRef.price2);
+                if (targetRef.alert) {
+                    return this.getInfiniteLineSegmentInBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
+                }
+                return this.clipLineToBounds(x1, y1, x2, y2, minX, minY, maxX, maxY);
+            }
+        }
+
+        if (targetType === 'rect') {
+            if (!(Number.isFinite(targetRef.time1) && Number.isFinite(targetRef.price1) && Number.isFinite(targetRef.time2) && Number.isFinite(targetRef.price2))) {
+                return null;
+            }
+            const rx1 = this.timeToX(targetRef.time1);
+            const ry1 = this.priceToY(targetRef.price1);
+            const rx2 = this.timeToX(targetRef.time2);
+            const ry2 = this.priceToY(targetRef.price2);
+            const left = Math.max(minX, Math.min(rx1, rx2));
+            const right = Math.min(maxX, Math.max(rx1, rx2));
+            const top = Math.max(minY, Math.min(ry1, ry2));
+            const bottom = Math.min(maxY, Math.max(ry1, ry2));
+            if (left > right || top > bottom) return null;
+            return { x1: left, y1: top, x2: right, y2: bottom, isRect: true };
+        }
+
+        return null;
+    }
+
+    drawLineAlertIcons() {
+        if (!Array.isArray(this.lineAlerts) || this.lineAlerts.length === 0) return;
+
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = Math.ceil(this.padding.left);
+        const minY = Math.ceil(this.padding.top);
+        const maxX = Math.floor(this.logicalWidth - this.padding.right);
+        const maxY = Math.floor(this.padding.top + chartAreaHeight);
+
+        this.ctx.save();
+        this.ctx.beginPath();
+        this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
+        this.ctx.clip();
+
+        const iconSize = 16;
+        this.lineAlerts.forEach(item => {
+            if (!item || item.status !== 'active') return;
+            const targetRef = this.getDrawingByTarget(item.targetType, item.targetId);
+            if (!targetRef) return;
+
+            const seg = this.getAlertTargetScreenSegment(item.targetType, targetRef, minX, minY, maxX, maxY);
+            if (!seg) return;
+
+            const iconAnchor = seg.isRect
+                ? { x: seg.x2, y: seg.y1 }
+                : (seg.x1 >= seg.x2 ? { x: seg.x1, y: seg.y1 } : { x: seg.x2, y: seg.y2 });
+            const iconX = Math.max(minX + 2, Math.min(maxX - iconSize - 2, iconAnchor.x - iconSize - 2));
+            const iconY = Math.max(minY + 2, Math.min(maxY - iconSize - 2, iconAnchor.y - iconSize / 2));
+            let iconColor = '#4a9eff';
+            if (item.targetType === 'ray' && targetRef.alert) iconColor = '#ff9800';
+            if (this.alarmIconReady) {
+                const cacheKey = `${iconColor}:${iconSize}`;
+                let tinted = this.alarmIconTintCache.get(cacheKey);
+                if (!tinted) {
+                    tinted = document.createElement('canvas');
+                    tinted.width = iconSize;
+                    tinted.height = iconSize;
+                    const tctx = tinted.getContext('2d');
+                    if (tctx) {
+                        tctx.clearRect(0, 0, iconSize, iconSize);
+                        tctx.drawImage(this.alarmIcon, 0, 0, iconSize, iconSize);
+                        tctx.globalCompositeOperation = 'source-in';
+                        tctx.fillStyle = iconColor;
+                        tctx.fillRect(0, 0, iconSize, iconSize);
+                    }
+                    this.alarmIconTintCache.set(cacheKey, tinted);
+                }
+                this.ctx.drawImage(tinted, iconX, iconY, iconSize, iconSize);
+            } else {
+                this.ctx.fillStyle = iconColor;
+                this.ctx.font = '12px sans-serif';
+                this.ctx.textAlign = 'center';
+                this.ctx.textBaseline = 'middle';
+                this.ctx.fillText('!', iconX + iconSize / 2, iconY + iconSize / 2);
+            }
+        });
+
         this.ctx.restore();
     }
 
@@ -3988,6 +4582,7 @@ class CandlestickChart {
             this.drawYAxis();
             this.drawLivePriceLine();
             this.drawAlertPriceLabels();
+            this.drawLineAlertIcons();
             this.drawXAxis();
             // Crosshair labels must be above axis labels.
             this.drawCrosshair();
