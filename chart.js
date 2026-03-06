@@ -1303,12 +1303,10 @@ class CandlestickChart {
             
             // Store symbol and interval
             const nextSymbol = String(symbol || this.symbol || 'BTCUSDT').toUpperCase();
-            const symbolChanged = nextSymbol !== this.symbol;
             this.symbol = nextSymbol;
             this.interval = interval;
-            if (symbolChanged) {
-                this.loadDrawingsFromStorage(this.symbol);
-            }
+            // Всегда подгружаем рисовалки для текущего символа при инициализации данных.
+            this.loadDrawingsFromStorage(this.symbol);
             // Биржа — источник данных (отображается в шапке)
             this.exchangeName = 'Binance';
             
