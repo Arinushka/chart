@@ -134,6 +134,7 @@ class CandlestickChart {
         this.densityAnomalyMultiplier = 10; // аномальная плотность относительно среднего объема уровня
         this.mmDensityTolerancePct = 0.5; // допуск по расстоянию (%)
         this.mmVolumeToleranceRatio = 0.2; // допуск по объему (20%)
+        this.drawingsStoragePrefix = 'chart.drawings.v1';
         
         // Bind resize
         window.addEventListener('resize', () => this.resize());
@@ -150,9 +151,167 @@ class CandlestickChart {
         // Сразу показываем биржу — источник данных (как на первом скриншоте)
         const exchangeEl = document.getElementById('exchangeName');
         if (exchangeEl) exchangeEl.textContent = this.exchangeName || '—';
+        this.loadDrawingsFromStorage(this.symbol);
         
         // Load data from Binance API
         this.loadBinanceData();
+    }
+
+    getDrawingsStorageKey(symbolOverride) {
+        const symbol = String(symbolOverride || this.symbol || 'BTCUSDT').toUpperCase();
+        const market = String(this.market || 'spot').toLowerCase();
+        return `${this.drawingsStoragePrefix}:${market}:${symbol}`;
+    }
+
+    serializeDrawingsForStorage() {
+        const toFiniteNumber = (v) => {
+            const n = Number(v);
+            return Number.isFinite(n) ? n : null;
+        };
+        const normalizeSummary = (summary) => {
+            if (!summary || typeof summary !== 'object') return null;
+            return {
+                count: Number.isFinite(Number(summary.count)) ? Number(summary.count) : 0,
+                percentChange: typeof summary.percentChange === 'string' ? summary.percentChange : '0%',
+                timePeriod: typeof summary.timePeriod === 'string' ? summary.timePeriod : '0н 0ч',
+                bars: Number.isFinite(Number(summary.bars)) ? Number(summary.bars) : 0
+            };
+        };
+        const sanitizeLine = (line) => {
+            const time1 = toFiniteNumber(line?.time1);
+            const price1 = toFiniteNumber(line?.price1);
+            const time2 = toFiniteNumber(line?.time2);
+            const price2 = toFiniteNumber(line?.price2);
+            if (time1 === null || price1 === null || time2 === null || price2 === null) return null;
+            return { time1, price1, time2, price2 };
+        };
+        const sanitizeRay = (line) => {
+            const time1 = toFiniteNumber(line?.time1);
+            const price = toFiniteNumber(line?.price);
+            if (time1 === null || price === null) return null;
+            return { time1, price, alert: !!line?.alert };
+        };
+        const sanitizeRect = (rect) => {
+            const time1 = toFiniteNumber(rect?.time1);
+            const price1 = toFiniteNumber(rect?.price1);
+            const time2 = toFiniteNumber(rect?.time2);
+            const price2 = toFiniteNumber(rect?.price2);
+            if (time1 === null || price1 === null || time2 === null || price2 === null) return null;
+            return { time1, price1, time2, price2 };
+        };
+        const sanitizeRuler = (selection) => {
+            const time1 = toFiniteNumber(selection?.time1);
+            const price1 = toFiniteNumber(selection?.price1);
+            const time2 = toFiniteNumber(selection?.time2);
+            const price2 = toFiniteNumber(selection?.price2);
+            if (time1 === null || price1 === null || time2 === null || price2 === null) return null;
+            return {
+                time1,
+                price1,
+                time2,
+                price2,
+                summary: normalizeSummary(selection?.summary)
+            };
+        };
+
+        return {
+            drawnLines: this.drawnLines.map(sanitizeLine).filter(Boolean),
+            horizontalLines: this.horizontalLines.map(sanitizeRay).filter(Boolean),
+            rectangles: this.rectangles.map(sanitizeRect).filter(Boolean),
+            rulerSelections: this.rulerSelections.map(sanitizeRuler).filter(Boolean)
+        };
+    }
+
+    saveDrawingsToStorage() {
+        try {
+            const key = this.getDrawingsStorageKey();
+            const payload = this.serializeDrawingsForStorage();
+            if (!payload.drawnLines.length && !payload.horizontalLines.length && !payload.rectangles.length && !payload.rulerSelections.length) {
+                localStorage.removeItem(key);
+                return;
+            }
+            localStorage.setItem(key, JSON.stringify(payload));
+        } catch (error) {
+            console.warn('Failed to save drawings to localStorage:', error);
+        }
+    }
+
+    loadDrawingsFromStorage(symbolOverride) {
+        try {
+            const key = this.getDrawingsStorageKey(symbolOverride);
+            const raw = localStorage.getItem(key);
+            if (!raw) {
+                this.drawnLines = [];
+                this.horizontalLines = [];
+                this.rectangles = [];
+                this.rulerSelections = [];
+                return;
+            }
+            const parsed = JSON.parse(raw);
+            const data = parsed && typeof parsed === 'object' ? parsed : {};
+            this.drawnLines = Array.isArray(data.drawnLines) ? data.drawnLines.filter(item =>
+                Number.isFinite(item?.time1) &&
+                Number.isFinite(item?.price1) &&
+                Number.isFinite(item?.time2) &&
+                Number.isFinite(item?.price2)
+            ).map(item => ({
+                time1: Number(item.time1),
+                price1: Number(item.price1),
+                time2: Number(item.time2),
+                price2: Number(item.price2)
+            })) : [];
+            this.horizontalLines = Array.isArray(data.horizontalLines) ? data.horizontalLines.filter(item =>
+                Number.isFinite(item?.time1) &&
+                Number.isFinite(item?.price)
+            ).map(item => ({
+                time1: Number(item.time1),
+                price: Number(item.price),
+                alert: !!item.alert
+            })) : [];
+            this.rectangles = Array.isArray(data.rectangles) ? data.rectangles.filter(item =>
+                Number.isFinite(item?.time1) &&
+                Number.isFinite(item?.price1) &&
+                Number.isFinite(item?.time2) &&
+                Number.isFinite(item?.price2)
+            ).map(item => ({
+                time1: Number(item.time1),
+                price1: Number(item.price1),
+                time2: Number(item.time2),
+                price2: Number(item.price2)
+            })) : [];
+            this.rulerSelections = Array.isArray(data.rulerSelections) ? data.rulerSelections.filter(item =>
+                Number.isFinite(item?.time1) &&
+                Number.isFinite(item?.price1) &&
+                Number.isFinite(item?.time2) &&
+                Number.isFinite(item?.price2)
+            ).map(item => ({
+                time1: Number(item.time1),
+                price1: Number(item.price1),
+                time2: Number(item.time2),
+                price2: Number(item.price2),
+                summary: (item.summary && typeof item.summary === 'object') ? item.summary : null
+            })) : [];
+        } catch (error) {
+            console.warn('Failed to load drawings from localStorage:', error);
+            this.drawnLines = [];
+            this.horizontalLines = [];
+            this.rectangles = [];
+            this.rulerSelections = [];
+        }
+    }
+
+    refreshRulerSummaries() {
+        if (!Array.isArray(this.rulerSelections) || this.rulerSelections.length === 0 || !Array.isArray(this.candles) || this.candles.length === 0) {
+            return;
+        }
+        this.rulerSelections.forEach(selection => {
+            if (!selection) return;
+            const startTime = Math.min(selection.time1, selection.time2);
+            const endTime = Math.max(selection.time1, selection.time2);
+            const minPrice = Math.min(selection.price1, selection.price2);
+            const maxPrice = Math.max(selection.price1, selection.price2);
+            selection.summary = this.calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice);
+        });
     }
     
     setupZoomEvents() {
@@ -439,6 +598,7 @@ class CandlestickChart {
                         time1: t1, price1: p1, time2: t2, price2: p2,
                         summary: summary
                     });
+                    this.saveDrawingsToStorage();
                     this.currentRulerSelection = null;
                     this.draw();
                     this.setRulerMode(false);
@@ -453,6 +613,7 @@ class CandlestickChart {
                     time1: this.xToTime(x),
                     price: this.yToPrice(y)
                 });
+                this.saveDrawingsToStorage();
                 this.draw();
                 this.setHorizontalLineMode(false);
                 document.querySelector('.tool-btn[title="Horizontal Line"]')?.classList.remove('active');
@@ -466,6 +627,7 @@ class CandlestickChart {
                     price: this.yToPrice(y),
                     alert: true
                 });
+                this.saveDrawingsToStorage();
                 this.draw();
                 this.setAlertMode(false);
                 document.querySelector('.tool-btn[title="Alert"]')?.classList.remove('active');
@@ -489,6 +651,7 @@ class CandlestickChart {
                         time2: this.xToTime(this.currentRectangle.x2),
                         price2: this.yToPrice(this.currentRectangle.y2)
                     });
+                    this.saveDrawingsToStorage();
                     this.currentRectangle = null;
                     this.tempPoint = null;
                     this.draw();
@@ -513,6 +676,7 @@ class CandlestickChart {
                         time2: this.xToTime(this.currentLine.x2),
                         price2: this.yToPrice(this.currentLine.y2)
                     });
+                    this.saveDrawingsToStorage();
                     this.currentLine = null;
                     this.tempPoint = null;
                     this.draw();
@@ -541,6 +705,7 @@ class CandlestickChart {
             else if (s.type === 'ray') this.horizontalLines.splice(s.index, 1);
             else if (s.type === 'ruler') this.rulerSelections.splice(s.index, 1);
             this.selectedDrawing = null;
+            this.saveDrawingsToStorage();
             this.draw();
         };
         document.addEventListener('keydown', onKeyDown);
@@ -609,11 +774,13 @@ class CandlestickChart {
         // Mouse up: отпускание кнопки завершает панорамирование и масштабирование
         this.canvas.addEventListener('mouseup', (e) => {
             if (e.button === 0) {
+                const hadDraggedDrawing = !!this.draggedDrawing;
                 this.draggedDrawing = null;
                 this.isZoomDragging = false;
                 this.zoomDragAxis = 'both';
                 this.isPanning = false;
                 this.canvas.style.cursor = 'default';
+                if (hadDraggedDrawing) this.saveDrawingsToStorage();
             }
             if (e.button === 2 && this.isPanning) {
                 this.isPanning = false;
@@ -626,6 +793,7 @@ class CandlestickChart {
             if (this.draggedDrawing) {
                 this.draggedDrawing = null;
                 this.canvas.style.cursor = 'default';
+                this.saveDrawingsToStorage();
             }
             if (this.isPanning) {
                 this.isPanning = false;
@@ -672,6 +840,7 @@ class CandlestickChart {
                 else if (hit.type === 'ray') this.horizontalLines.splice(hit.index, 1);
                 else if (hit.type === 'ruler') this.rulerSelections.splice(hit.index, 1);
                 this.selectedDrawing = null;
+                this.saveDrawingsToStorage();
                 this.draw();
             }
         });
@@ -1055,6 +1224,7 @@ class CandlestickChart {
         this.currentRectangle = null;
         this.currentRulerSelection = null;
         this.tempPoint = null;
+        this.saveDrawingsToStorage();
         this.draw();
     }
     
@@ -1132,8 +1302,13 @@ class CandlestickChart {
             }
             
             // Store symbol and interval
-            this.symbol = symbol.toUpperCase();
+            const nextSymbol = String(symbol || this.symbol || 'BTCUSDT').toUpperCase();
+            const symbolChanged = nextSymbol !== this.symbol;
+            this.symbol = nextSymbol;
             this.interval = interval;
+            if (symbolChanged) {
+                this.loadDrawingsFromStorage(this.symbol);
+            }
             // Биржа — источник данных (отображается в шапке)
             this.exchangeName = 'Binance';
             
@@ -1512,6 +1687,7 @@ class CandlestickChart {
             this.visibleMaxPrice = this.maxPrice;
         }
         
+        this.refreshRulerSummaries();
         this.updateTopBarMetrics();
         
         // Initial resize and draw
