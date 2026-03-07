@@ -58,6 +58,28 @@ body {
     white-space: nowrap;
 }
 
+.asset-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.asset-field {
+    font-size: 13px;
+    color: #bdbdbd;
+    white-space: nowrap;
+}
+
+.asset-label {
+    color: #8f8f8f;
+}
+
+.asset-value {
+    color: #f0f0f0;
+    font-weight: 600;
+}
+
 .top-bar .metrics {
     display: flex;
     gap: 10px;
@@ -277,7 +299,7 @@ body {
 .chart-reset-zoom-corner-btn {
     position: absolute;
     right: 34px;
-    bottom: 54px;
+    bottom: 30px;
     z-index: 100;
     width: 24px;
     height: 24px;
@@ -357,7 +379,7 @@ body {
 /* Fullscreen Button */
 .fullscreen-btn {
     position: absolute;
-    bottom: 54px;
+    bottom: 30px;
     right: 8px;
     width: 24px;
     height: 24px;

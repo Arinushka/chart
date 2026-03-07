@@ -11,11 +11,11 @@ class CandlestickChart {
         this.dpr = 1;
         this.logicalWidth = 0;
         this.logicalHeight = 0;
-        this.padding = { top: 20, right: 80, bottom: 80, left: 10 }; // Increased bottom for volume
+        this.padding = { top: 20, right: 80, bottom: 56, left: 10 }; // Reduced bottom reserve to maximize chart height
         this.chartWidth = 0;
         this.chartHeight = 0;
         this.chartEndPositionRatio = 2 / 3; // окончание графика (последняя свеча) на 2/3 ширины экрана
-        this.volumeHeight = 50; // Height reserved for volume bars
+        this.volumeHeight = 42; // Slightly reduced to free more space for main chart
         
         // Price range - will be calculated from data
         this.minPrice = 0;
@@ -167,9 +167,8 @@ class CandlestickChart {
         this.setupDrawingAlertContextMenu();
         this.startLineAlertChecker();
         
-        // Сразу показываем биржу — источник данных (как на первом скриншоте)
-        const exchangeEl = document.getElementById('exchangeName');
-        if (exchangeEl) exchangeEl.textContent = this.exchangeName || '—';
+        // Сразу показываем тикер/биржу/рынок в шапке
+        this.updateAssetInfoHeader();
         this.loadDrawingsFromStorage(this.symbol);
         
         // Load data from Binance API
@@ -1010,7 +1009,7 @@ class CandlestickChart {
                     this.currentRulerSelection = null;
                     this.draw();
                     this.setRulerMode(false);
-                    document.querySelector('.tool-btn[title="Ruler"]')?.classList.remove('active');
+                    document.querySelector('.tool-btn[title="Линейка"]')?.classList.remove('active');
                 }
                 return;
             }
@@ -1025,7 +1024,7 @@ class CandlestickChart {
                 this.saveDrawingsToStorage();
                 this.draw();
                 this.setHorizontalLineMode(false);
-                document.querySelector('.tool-btn[title="Horizontal Line"]')?.classList.remove('active');
+                document.querySelector('.tool-btn[title="Луч"]')?.classList.remove('active');
                 return;
             }
             
@@ -1040,7 +1039,7 @@ class CandlestickChart {
                 this.saveDrawingsToStorage();
                 this.draw();
                 this.setAlertMode(false);
-                document.querySelector('.tool-btn[title="Alert"]')?.classList.remove('active');
+                document.querySelector('.tool-btn[title="Горзонтальная линия"]')?.classList.remove('active');
                 return;
             }
             
@@ -1067,7 +1066,7 @@ class CandlestickChart {
                     this.tempPoint = null;
                     this.draw();
                     this.setRectangleMode(false);
-                    document.querySelector('.tool-btn[title="Rectangle"]')?.classList.remove('active');
+                    document.querySelector('.tool-btn[title="Прямоугольник"]')?.classList.remove('active');
                 }
                 return;
             }
@@ -1093,7 +1092,7 @@ class CandlestickChart {
                     this.tempPoint = null;
                     this.draw();
                     this.setDrawingMode(false);
-                    document.querySelector('.tool-btn[title="Brush"]')?.classList.remove('active');
+                    document.querySelector('.tool-btn[title="Трендовая линия"]')?.classList.remove('active');
                 }
                 return;
             }
@@ -1999,8 +1998,7 @@ class CandlestickChart {
     
     updateTopBarMetrics() {
         const el = id => document.getElementById(id);
-        const exchangeEl = el('exchangeName');
-        if (exchangeEl) exchangeEl.textContent = this.exchangeName || '—';
+        this.updateAssetInfoHeader();
         
         if (!this.candles || this.candles.length === 0) {
             if (el('metricPriceChangeValue')) el('metricPriceChangeValue').textContent = '—';
@@ -2062,6 +2060,71 @@ class CandlestickChart {
         else if (totalVol >= 1e3) volStr = (totalVol / 1e3).toFixed(1) + 'K';
         else if (totalVol > 0) volStr = totalVol.toFixed(0);
         if (el('metricVolumeValue')) el('metricVolumeValue').textContent = volStr;
+    }
+
+    formatMarketLabel(market) {
+        const m = String(market || '').toLowerCase();
+        if (m === 'futures') return 'Futures';
+        if (m === 'spot') return 'Spot';
+        return market || '—';
+    }
+
+    abbreviateTickerSymbol(symbol) {
+        const full = String(symbol || '').toUpperCase();
+        if (!full) return '—';
+        const knownQuotes = ['USDT', 'USDC', 'BUSD', 'USD', 'BTC', 'ETH', 'BNB', 'EUR', 'TRY', 'RUB'];
+        const quote = knownQuotes.find(q => full.endsWith(q) && full.length > q.length);
+        if (quote) return full.slice(0, full.length - quote.length);
+        return full.slice(0, Math.min(5, full.length));
+    }
+
+    abbreviateExchangeName(exchangeName) {
+        const full = String(exchangeName || '').trim();
+        if (!full) return '—';
+        const lower = full.toLowerCase();
+        if (lower.includes('binance')) return 'BI';
+        if (lower.includes('bybit')) return 'BY';
+        if (lower.includes('demo')) return 'DE';
+        const letters = full.replace(/[^A-Za-zА-Яа-яЁё]/g, '');
+        if (!letters) return full.slice(0, 2).toUpperCase();
+        return letters.slice(0, 2).toUpperCase();
+    }
+
+    abbreviateByInitials(value) {
+        const text = String(value || '').trim();
+        if (!text) return '—';
+        const parts = text.split(/[\s\-_\/]+/).filter(Boolean);
+        if (parts.length === 1) {
+            const clean = parts[0].replace(/[^A-Za-zА-Яа-яЁё]/g, '');
+            return (clean[0] || parts[0][0] || '—').toUpperCase();
+        }
+        return parts.map(p => (p[0] || '')).join('').slice(0, 3).toUpperCase() || '—';
+    }
+
+    updateAssetInfoHeader() {
+        const el = id => document.getElementById(id);
+        const assetInfoEl = document.querySelector('.asset-info');
+        const tickerEl = el('tickerName');
+        const exchangeEl = el('exchangeName');
+        const marketEl = el('marketType');
+        const fullTicker = (this.symbol || '—').toUpperCase();
+        const fullExchange = this.exchangeName || '—';
+        const fullMarket = this.formatMarketLabel(this.market);
+        if (tickerEl) {
+            tickerEl.textContent = fullTicker;
+            tickerEl.title = 'Тикер';
+        }
+        if (exchangeEl) {
+            exchangeEl.textContent = fullExchange;
+            exchangeEl.title = 'Биржа';
+        }
+        if (marketEl) {
+            marketEl.textContent = fullMarket;
+            marketEl.title = 'Рынок';
+        }
+        if (assetInfoEl) {
+            assetInfoEl.title = '';
+        }
     }
     
     getIntervalMs(interval) {
@@ -3069,7 +3132,6 @@ class CandlestickChart {
         if (hasRectangles) {
             this.ctx.strokeStyle = '#4a9eff';
             this.ctx.lineWidth = 2;
-            this.ctx.fillStyle = 'rgba(74, 158, 255, 0.1)'; // Semi-transparent fill
             
             // Draw completed rectangles
             this.rectangles.forEach((rect, index) => {
@@ -3094,7 +3156,6 @@ class CandlestickChart {
                 const clippedWidth = Math.min(maxX, x + width) - clippedX;
                 const clippedHeight = Math.min(maxY, y + height) - clippedY;
                 if (clippedWidth > 0 && clippedHeight > 0) {
-                    this.ctx.fillRect(clippedX, clippedY, clippedWidth, clippedHeight);
                     this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
                 }
                 this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
@@ -3112,7 +3173,6 @@ class CandlestickChart {
             
             // Draw current rectangle being created (with preview)
             if (this.currentRectangle && this.tempPoint) {
-                this.ctx.fillStyle = 'rgba(74, 158, 255, 0.1)';
                 this.ctx.strokeStyle = '#4a9eff';
                 this.ctx.lineWidth = 2;
                 let x = Math.min(this.currentRectangle.x1, this.tempPoint.x);
@@ -3127,9 +3187,7 @@ class CandlestickChart {
                 const clippedHeight = Math.min(maxY, y + height) - clippedY;
                 
                 if (clippedWidth > 0 && clippedHeight > 0) {
-                    // Preview rectangle with transparency
-                    this.ctx.globalAlpha = 0.5;
-                    this.ctx.fillRect(clippedX, clippedY, clippedWidth, clippedHeight);
+                    // Preview rectangle outline only
                     this.ctx.globalAlpha = 0.7;
                     this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
                 }
@@ -5744,12 +5802,12 @@ function setupIndicatorsModal(chart) {
 }
 
 function setupToolButtons(chart) {
-    const alertBtn = document.querySelector('.tool-btn[title="Alert"]');
-    const brushBtn = document.querySelector('.tool-btn[title="Brush"]');
-    const horizontalLineBtn = document.querySelector('.tool-btn[title="Horizontal Line"]');
-    const rectangleBtn = document.querySelector('.tool-btn[title="Rectangle"]');
-    const rulerBtn = document.querySelector('.tool-btn[title="Ruler"]');
-    const deleteBtn = document.querySelector('.tool-btn[title="Delete"]');
+    const alertBtn = document.querySelector('.tool-btn[title="Горзонтальная линия"]');
+    const brushBtn = document.querySelector('.tool-btn[title="Трендовая линия"]');
+    const horizontalLineBtn = document.querySelector('.tool-btn[title="Луч"]');
+    const rectangleBtn = document.querySelector('.tool-btn[title="Прямоугольник"]');
+    const rulerBtn = document.querySelector('.tool-btn[title="Линейка"]');
+    const deleteBtn = document.querySelector('.tool-btn[title="Удалить все элементы рисования (2 клика)"]');
     
     function deactivateAlert() {
         if (alertBtn) alertBtn.classList.remove('active');
@@ -5892,14 +5950,6 @@ function setupToolButtons(chart) {
                 deleteClickTimer = setTimeout(() => {
                     deleteClickCount = 0;
                 }, 1000); // Reset after 1 second
-                
-                // Visual feedback for first click
-                deleteBtn.style.backgroundColor = '#ff9800';
-                setTimeout(() => {
-                    if (deleteClickCount === 1) {
-                        deleteBtn.style.backgroundColor = '';
-                    }
-                }, 300);
             }
         });
     }
