@@ -3020,7 +3020,7 @@ class CandlestickChart {
                 const isAlert = !!line.alert;
                 this.ctx.strokeStyle = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
                 this.ctx.lineWidth = selected ? (isAlert ? 1.2 : 4) : 0.6;
-                this.ctx.setLineDash([8, 4]);
+                this.ctx.setLineDash(isAlert ? [] : [8, 4]);
                 let x1, y1, x2, y2;
                 if (line.time1 != null && line.price1 != null && line.time2 != null && line.price2 != null) {
                     x1 = this.timeToX(line.time1);
