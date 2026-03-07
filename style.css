@@ -277,7 +277,7 @@ body {
 .chart-reset-zoom-corner-btn {
     position: absolute;
     right: 34px;
-    bottom: 48px;
+    bottom: 54px;
     z-index: 100;
     width: 24px;
     height: 24px;
@@ -357,7 +357,7 @@ body {
 /* Fullscreen Button */
 .fullscreen-btn {
     position: absolute;
-    bottom: 48px;
+    bottom: 54px;
     right: 8px;
     width: 24px;
     height: 24px;
