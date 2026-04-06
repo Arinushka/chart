@@ -51,6 +51,18 @@ class CandlestickChart {
             color: 'rgba(220, 220, 220, 0.85)',
             lineWidth: 1
         };
+        this.livePriceTimerEnabled = true;
+        this.livePriceTimerTickIntervalMs = 1000;
+        this.livePriceTimerTickId = null;
+        this.livePriceTimerHitBox = null;
+        this.livePriceTimerMenuEl = null;
+        this.livePriceTimerMenuToggleBtnEl = null;
+        /** openTime последней свечи после загрузки/сброса; при росте — появилась новая свеча */
+        this.livePriceTimerRolloverBaselineOpen = null;
+        /** openTime свечи, для которой показываем таймер (только после rollover) */
+        this.livePriceTimerActiveBucket = null;
+        /** Локальный момент (ms), когда эта свеча впервые обнаружена как новая */
+        this.livePriceTimerActiveStartedAtMs = null;
         
         // Drawing mode state
         this.drawingMode = false;
@@ -165,6 +177,8 @@ class CandlestickChart {
         // Контекстное меню «Сбросить масштаб» по правому клику
         this.setupResetZoomContextMenu();
         this.setupDrawingAlertContextMenu();
+        this.setupLivePriceTimerContextMenu();
+        this.startLivePriceTimerTicker();
         this.startLineAlertChecker();
         
         // Сразу показываем тикер/биржу/рынок в шапке
@@ -539,6 +553,176 @@ class CandlestickChart {
         });
         window.addEventListener('resize', () => this.hideDrawingAlertContextMenu());
         window.addEventListener('scroll', () => this.hideDrawingAlertContextMenu(), true);
+    }
+
+    setupLivePriceTimerContextMenu() {
+        const menu = document.createElement('div');
+        menu.style.position = 'fixed';
+        menu.style.zIndex = '10001';
+        menu.style.display = 'none';
+        menu.style.background = '#1f1f1f';
+        menu.style.border = '1px solid #3a3a3a';
+        menu.style.borderRadius = '8px';
+        menu.style.padding = '6px';
+        menu.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.35)';
+        menu.style.minWidth = '140px';
+
+        const toggleBtn = document.createElement('button');
+        toggleBtn.type = 'button';
+        toggleBtn.style.width = '100%';
+        toggleBtn.style.height = '30px';
+        toggleBtn.style.textAlign = 'left';
+        toggleBtn.style.background = 'transparent';
+        toggleBtn.style.color = '#e8e8e8';
+        toggleBtn.style.border = 'none';
+        toggleBtn.style.borderRadius = '6px';
+        toggleBtn.style.padding = '0 8px';
+        toggleBtn.style.cursor = 'pointer';
+        toggleBtn.addEventListener('mouseenter', () => {
+            toggleBtn.style.background = '#2a2a2a';
+        });
+        toggleBtn.addEventListener('mouseleave', () => {
+            toggleBtn.style.background = 'transparent';
+        });
+        toggleBtn.addEventListener('click', () => {
+            this.livePriceTimerEnabled = !this.livePriceTimerEnabled;
+            this.hideLivePriceTimerContextMenu();
+            this.draw();
+        });
+
+        menu.appendChild(toggleBtn);
+        document.body.appendChild(menu);
+
+        this.livePriceTimerMenuEl = menu;
+        this.livePriceTimerMenuToggleBtnEl = toggleBtn;
+
+        document.addEventListener('pointerdown', (e) => {
+            if (!this.livePriceTimerMenuEl || this.livePriceTimerMenuEl.style.display === 'none') return;
+            if (!this.livePriceTimerMenuEl.contains(e.target)) this.hideLivePriceTimerContextMenu();
+        });
+        window.addEventListener('resize', () => this.hideLivePriceTimerContextMenu());
+        window.addEventListener('scroll', () => this.hideLivePriceTimerContextMenu(), true);
+    }
+
+    showLivePriceTimerContextMenu(clientX, clientY) {
+        if (!this.livePriceTimerMenuEl || !this.livePriceTimerMenuToggleBtnEl) return;
+        this.livePriceTimerMenuToggleBtnEl.textContent = this.livePriceTimerEnabled ? 'Таймер: выкл' : 'Таймер: вкл';
+        this.livePriceTimerMenuEl.style.display = 'block';
+
+        const margin = 8;
+        const menuRect = this.livePriceTimerMenuEl.getBoundingClientRect();
+        const maxX = window.innerWidth - menuRect.width - margin;
+        const maxY = window.innerHeight - menuRect.height - margin;
+        const left = Math.max(margin, Math.min(maxX, clientX + 6));
+        const top = Math.max(margin, Math.min(maxY, clientY + 6));
+        this.livePriceTimerMenuEl.style.left = `${left}px`;
+        this.livePriceTimerMenuEl.style.top = `${top}px`;
+    }
+
+    hideLivePriceTimerContextMenu() {
+        if (!this.livePriceTimerMenuEl) return;
+        this.livePriceTimerMenuEl.style.display = 'none';
+    }
+
+    startLivePriceTimerTicker() {
+        if (this.livePriceTimerTickId) return;
+        this.livePriceTimerTickId = setInterval(() => {
+            if (this.livePriceTimerEnabled) this.draw();
+        }, this.livePriceTimerTickIntervalMs);
+    }
+
+    syncLivePriceTimerRolloverState() {
+        if (!Array.isArray(this.candles) || this.candles.length === 0) return;
+        const last = this.candles[this.candles.length - 1];
+        if (!last || !Number.isFinite(last.time)) return;
+        if (this.livePriceTimerRolloverBaselineOpen == null) {
+            this.livePriceTimerRolloverBaselineOpen = last.time;
+            return;
+        }
+        if (last.time > this.livePriceTimerRolloverBaselineOpen) {
+            this.livePriceTimerActiveBucket = last.time;
+            this.livePriceTimerRolloverBaselineOpen = last.time;
+        }
+    }
+
+    updateLivePriceTimerOnIncomingCandle(candleTime) {
+        if (!Number.isFinite(candleTime)) return;
+        if (this.livePriceTimerRolloverBaselineOpen == null) {
+            this.livePriceTimerRolloverBaselineOpen = candleTime;
+            this.livePriceTimerActiveBucket = null;
+            this.livePriceTimerActiveStartedAtMs = null;
+            return;
+        }
+        // При приходе новой свечи всегда переносим таймер на нее.
+        if (candleTime > this.livePriceTimerRolloverBaselineOpen) {
+            this.livePriceTimerActiveBucket = candleTime;
+            this.livePriceTimerRolloverBaselineOpen = candleTime;
+            this.livePriceTimerActiveStartedAtMs = Date.now();
+        }
+    }
+
+    resetLivePriceTimerStateFromData() {
+        if (!Array.isArray(this.candles) || this.candles.length === 0) {
+            this.livePriceTimerRolloverBaselineOpen = null;
+            this.livePriceTimerActiveBucket = null;
+            this.livePriceTimerActiveStartedAtMs = null;
+            return;
+        }
+        const last = this.candles[this.candles.length - 1];
+        this.livePriceTimerRolloverBaselineOpen = Number.isFinite(last?.time) ? last.time : null;
+        this.livePriceTimerActiveBucket = null;
+        this.livePriceTimerActiveStartedAtMs = null;
+    }
+
+    getLivePriceTimerLabel() {
+        this.syncLivePriceTimerRolloverState();
+        const intervalMs = this.getIntervalMs(this.interval);
+        const lastCandle = Array.isArray(this.candles) && this.candles.length > 0
+            ? this.candles[this.candles.length - 1]
+            : null;
+        if (!Number.isFinite(intervalMs) || intervalMs <= 0 || !lastCandle || !Number.isFinite(lastCandle.time)) return null;
+
+        const now = Date.now();
+        // Таймер только после появления новой свечи (last.time стал больше baseline с момента загрузки).
+        if (this.livePriceTimerActiveBucket == null || lastCandle.time !== this.livePriceTimerActiveBucket) return null;
+        if (!Number.isFinite(this.livePriceTimerActiveStartedAtMs)) return null;
+
+        const totalSec = Math.max(1, Math.round(intervalMs / 1000));
+        const elapsedSec = Math.max(0, Math.floor((now - this.livePriceTimerActiveStartedAtMs) / 1000));
+        if (elapsedSec >= totalSec) return null;
+
+        const remainingSec = Math.max(1, totalSec - elapsedSec);
+
+        // Специальный формат: на границе минуты показываем секунды "60",
+        // например 1d на старте новой свечи => 23:59:60.
+        let hours;
+        let minutes;
+        let seconds;
+        if (remainingSec > 0 && remainingSec % 60 === 0) {
+            const totalMinutes = Math.floor(remainingSec / 60) - 1;
+            hours = Math.floor(totalMinutes / 60);
+            minutes = totalMinutes % 60;
+            seconds = 60;
+        } else {
+            hours = Math.floor(remainingSec / 3600);
+            minutes = Math.floor((remainingSec % 3600) / 60);
+            seconds = remainingSec % 60;
+        }
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+
+    isPointInLivePriceTimer(x, y) {
+        const box = this.livePriceTimerHitBox;
+        if (!box) return false;
+        return x >= box.x && x <= box.x + box.w && y >= box.y && y <= box.y + box.h;
+    }
+
+    isPointInPriceAxisArea(x, y) {
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        const minX = this.logicalWidth - this.padding.right;
+        const minY = this.padding.top;
+        const maxY = this.padding.top + chartAreaHeight;
+        return x >= minX && x <= this.logicalWidth && y >= minY && y <= maxY;
     }
 
     showDrawingAlertContextMenu(clientX, clientY, hit) {
@@ -1123,7 +1307,10 @@ class CandlestickChart {
         
         // Mouse down: в области осей (слева/снизу) — масштабирование по осям; в области графика — панорамирование
         this.canvas.addEventListener('mousedown', (e) => {
-            if (e.button === 0) this.hideDrawingAlertContextMenu();
+            if (e.button === 0) {
+                this.hideDrawingAlertContextMenu();
+                this.hideLivePriceTimerContextMenu();
+            }
             if (!this.drawingMode && !this.horizontalLineMode && !this.alertMode &&
                 !this.rectangleMode && !this.rulerMode) {
                 const rect = this.canvas.getBoundingClientRect();
@@ -1245,10 +1432,16 @@ class CandlestickChart {
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
+            if (this.isPointInPriceAxisArea(x, y)) {
+                this.hideDrawingAlertContextMenu();
+                this.showLivePriceTimerContextMenu(e.clientX, e.clientY);
+                return;
+            }
             const hit = this.hitTestDrawnElements(x, y);
             if (hit) {
                 if (hit.type === 'line' || hit.type === 'ray' || hit.type === 'rect') {
                     this.selectedDrawing = hit;
+                    this.hideLivePriceTimerContextMenu();
                     this.showDrawingAlertContextMenu(e.clientX, e.clientY, hit);
                     this.draw();
                     return;
@@ -1258,8 +1451,10 @@ class CandlestickChart {
                 this.saveDrawingsToStorage();
                 this.draw();
                 this.hideDrawingAlertContextMenu();
+                this.hideLivePriceTimerContextMenu();
             } else {
                 this.hideDrawingAlertContextMenu();
+                this.hideLivePriceTimerContextMenu();
             }
         });
         
@@ -1281,7 +1476,8 @@ class CandlestickChart {
             } else if (isOnCanvas) {
                 if (this.isPointInMainChartArea(x, y)) {
                     const hit = this.drawingsVisible ? this.hitTestDrawnElements(x, y) : null;
-                    this.canvas.style.cursor = hit ? 'pointer' : 'crosshair';
+                    const onTimer = this.isPointInLivePriceTimer(x, y);
+                    this.canvas.style.cursor = (hit || onTimer) ? 'pointer' : 'crosshair';
                 } else {
                     this.canvas.style.cursor = 'default';
                 }
@@ -1739,6 +1935,7 @@ class CandlestickChart {
                 low: parseFloat(kline[3]),
                 close: parseFloat(kline[4])
             }));
+            this.resetLivePriceTimerStateFromData();
             
             // Extract volume data
             this.volumeData = klines.map(kline => parseFloat(kline[5])); // Volume
@@ -1770,6 +1967,7 @@ class CandlestickChart {
             this.exchangeName = 'Демо';
             this.candles = this.generateSampleData();
             this.volumeData = this.generateVolumeData();
+            this.resetLivePriceTimerStateFromData();
             this.initializeFromData();
         }
     }
@@ -1904,6 +2102,7 @@ class CandlestickChart {
                 this.updatePriceLevels();
             }
             
+            this.updateLivePriceTimerOnIncomingCandle(candleTime);
             this.updateTopBarMetrics();
             // Redraw chart
             this.draw();
@@ -1947,6 +2146,7 @@ class CandlestickChart {
                 this.timeRange = this.endTime - this.startTime;
             }
 
+            this.updateLivePriceTimerOnIncomingCandle(candleTime);
             this.updateTopBarMetrics();
             this.draw();
         }
@@ -1957,6 +2157,14 @@ class CandlestickChart {
             this.ws.close();
             this.ws = null;
             console.log('WebSocket disconnected');
+        }
+        this.livePriceTimerActiveBucket = null;
+        this.livePriceTimerActiveStartedAtMs = null;
+        if (Array.isArray(this.candles) && this.candles.length > 0) {
+            const last = this.candles[this.candles.length - 1];
+            this.livePriceTimerRolloverBaselineOpen = Number.isFinite(last?.time) ? last.time : null;
+        } else {
+            this.livePriceTimerRolloverBaselineOpen = null;
         }
     }
     
@@ -2632,6 +2840,7 @@ class CandlestickChart {
     drawLivePriceLine() {
         const cfg = this.livePriceLineConfig;
         if (!cfg?.enabled) return;
+        this.livePriceTimerHitBox = null;
 
         const livePrice = this.getCurrentLivePrice();
         if (!Number.isFinite(livePrice)) return;
@@ -2679,6 +2888,30 @@ class CandlestickChart {
         this.ctx.fillRect(boxX, boxY, boxW, boxH);
         this.ctx.fillStyle = '#ffffff';
         this.ctx.fillText(label, boxX + padX, this.snapHalfPixel(y));
+
+        if (this.livePriceTimerEnabled) {
+            const timerLabel = this.getLivePriceTimerLabel();
+            if (timerLabel) {
+                this.ctx.font = '10px sans-serif';
+                this.ctx.textBaseline = 'middle';
+                const timerPadX = 6;
+                const timerBoxH = 16;
+                const timerTextW = this.ctx.measureText(timerLabel).width;
+                const timerBoxW = Math.max(boxW, timerTextW + timerPadX * 2);
+                const timerBoxX = boxX;
+                const timerBoxY = boxY + boxH + 2;
+                this.ctx.fillStyle = '#3a3a3a';
+                this.ctx.fillRect(timerBoxX, timerBoxY, timerBoxW, timerBoxH);
+                this.ctx.fillStyle = '#ffffff';
+                this.ctx.fillText(timerLabel, timerBoxX + timerPadX, this.snapHalfPixel(timerBoxY + timerBoxH / 2));
+                this.livePriceTimerHitBox = {
+                    x: timerBoxX,
+                    y: timerBoxY,
+                    w: timerBoxW,
+                    h: timerBoxH
+                };
+            }
+        }
         this.ctx.restore();
     }
 
