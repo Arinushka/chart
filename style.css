@@ -298,8 +298,8 @@ body {
 /* Кнопка «Сбросить масштаб» в правом нижнем углу графика (видна только после масштабирования по осям) */
 .chart-reset-zoom-corner-btn {
     position: absolute;
-    right: 34px;
-    bottom: 30px;
+    right: 4px;
+    bottom: 58px;
     z-index: 100;
     width: 24px;
     height: 24px;
@@ -829,7 +829,7 @@ body {
     background: #f5c93d;
 }
 
-@media (max-width: 958px) {
+@media (max-width: 1120px) {
     .top-bar {
         flex-wrap: wrap;
         gap: 8px 12px;
