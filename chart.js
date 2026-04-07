@@ -61,8 +61,6 @@ class CandlestickChart {
         this.livePriceTimerRolloverBaselineOpen = null;
         /** openTime свечи, для которой показываем таймер (только после rollover) */
         this.livePriceTimerActiveBucket = null;
-        /** Локальный момент (ms), когда эта свеча впервые обнаружена как новая */
-        this.livePriceTimerActiveStartedAtMs = null;
         
         // Drawing mode state
         this.drawingMode = false;
@@ -649,15 +647,13 @@ class CandlestickChart {
         if (!Number.isFinite(candleTime)) return;
         if (this.livePriceTimerRolloverBaselineOpen == null) {
             this.livePriceTimerRolloverBaselineOpen = candleTime;
-            this.livePriceTimerActiveBucket = null;
-            this.livePriceTimerActiveStartedAtMs = null;
+            this.livePriceTimerActiveBucket = candleTime;
             return;
         }
         // При приходе новой свечи всегда переносим таймер на нее.
         if (candleTime > this.livePriceTimerRolloverBaselineOpen) {
             this.livePriceTimerActiveBucket = candleTime;
             this.livePriceTimerRolloverBaselineOpen = candleTime;
-            this.livePriceTimerActiveStartedAtMs = Date.now();
         }
     }
 
@@ -665,13 +661,11 @@ class CandlestickChart {
         if (!Array.isArray(this.candles) || this.candles.length === 0) {
             this.livePriceTimerRolloverBaselineOpen = null;
             this.livePriceTimerActiveBucket = null;
-            this.livePriceTimerActiveStartedAtMs = null;
             return;
         }
         const last = this.candles[this.candles.length - 1];
         this.livePriceTimerRolloverBaselineOpen = Number.isFinite(last?.time) ? last.time : null;
-        this.livePriceTimerActiveBucket = null;
-        this.livePriceTimerActiveStartedAtMs = null;
+        this.livePriceTimerActiveBucket = Number.isFinite(last?.time) ? last.time : null;
     }
 
     getLivePriceTimerLabel() {
@@ -685,13 +679,12 @@ class CandlestickChart {
         const now = Date.now();
         // Таймер только после появления новой свечи (last.time стал больше baseline с момента загрузки).
         if (this.livePriceTimerActiveBucket == null || lastCandle.time !== this.livePriceTimerActiveBucket) return null;
-        if (!Number.isFinite(this.livePriceTimerActiveStartedAtMs)) return null;
+        // Если последняя свеча уже неактуальна (пропущены обновления), таймер скрываем.
+        if (now < lastCandle.time || now >= lastCandle.time + intervalMs) return null;
 
-        const totalSec = Math.max(1, Math.round(intervalMs / 1000));
-        const elapsedSec = Math.max(0, Math.floor((now - this.livePriceTimerActiveStartedAtMs) / 1000));
-        if (elapsedSec >= totalSec) return null;
-
-        const remainingSec = Math.max(1, totalSec - elapsedSec);
+        const nextCandleTime = lastCandle.time + intervalMs;
+        const remainingMs = Math.max(0, nextCandleTime - now);
+        const remainingSec = Math.max(0, Math.ceil(remainingMs / 1000));
 
         // Специальный формат: на границе минуты показываем секунды "60",
         // например 1d на старте новой свечи => 23:59:60.
@@ -2159,7 +2152,6 @@ class CandlestickChart {
             console.log('WebSocket disconnected');
         }
         this.livePriceTimerActiveBucket = null;
-        this.livePriceTimerActiveStartedAtMs = null;
         if (Array.isArray(this.candles) && this.candles.length > 0) {
             const last = this.candles[this.candles.length - 1];
             this.livePriceTimerRolloverBaselineOpen = Number.isFinite(last?.time) ? last.time : null;
