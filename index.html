@@ -504,6 +504,7 @@
                 </div>
                 <div class="indicators-modal-footer">
                     <button class="indicators-btn indicators-reset" id="indicatorsReset">Сброс</button>
+                    <button class="indicators-btn indicators-reset" id="indicatorsSaveDefault">По умолчанию</button>
                     <button class="indicators-btn indicators-save" id="indicatorsSave">Сохранить</button>
                 </div>
             </div>
@@ -519,7 +520,6 @@
                 <div class="indicators-modal-body">
                     <div class="indicators-list">
                         <label class="indicator-item values-item selected" data-value="density">
-                            <input type="checkbox" id="valueDensityEn">
                             Плотности
                         </label>
                     </div>
@@ -529,6 +529,7 @@
                             <div class="indicator-param-row">
                                 <label for="valueDensitySize">Размер</label>
                                 <select id="valueDensitySize">
+                                    <option value="all">Все плотности</option>
                                     <option value="large">Большие</option>
                                     <option value="medium">Средние</option>
                                     <option value="small">Малые</option>
@@ -547,6 +548,7 @@
                 </div>
                 <div class="indicators-modal-footer">
                     <button class="indicators-btn indicators-reset" id="valuesReset">Сброс</button>
+                    <button class="indicators-btn indicators-reset" id="valuesSaveDefault">По умолчанию</button>
                     <button class="indicators-btn indicators-save" id="valuesSave">Сохранить</button>
                 </div>
             </div>
@@ -562,11 +564,9 @@
                 <div class="indicators-modal-body">
                     <div class="indicators-list">
                         <label class="indicator-item levels-item selected" data-level="support">
-                            <input type="checkbox" id="levelSupportEn">
                             Поддержки
                         </label>
                         <label class="indicator-item levels-item" data-level="resistance">
-                            <input type="checkbox" id="levelResistanceEn">
                             Сопротивления
                         </label>
                     </div>
@@ -588,6 +588,7 @@
                 </div>
                 <div class="indicators-modal-footer">
                     <button class="indicators-btn indicators-reset" id="levelsReset">Сброс</button>
+                    <button class="indicators-btn indicators-reset" id="levelsSaveDefault">По умолчанию</button>
                     <button class="indicators-btn indicators-save" id="levelsSave">Сохранить</button>
                 </div>
             </div>
@@ -606,6 +607,12 @@
                 </button>
                 <button class="tool-btn tool-icon-wrap" title="Трендовая линия">
                     <svg class="tool-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M760-80q-50 0-85-35t-35-85q0-14 3-27t9-25L252-652q-12 6-25 9t-27 3q-50 0-85-35t-35-85q0-50 35-85t85-35q50 0 85 35t35 85q0 14-3 27t-9 25l400 400q12-6 25-9t27-3q50 0 85 35t35 85q0 50-35 85t-85 35Z"/></svg>
+                </button>
+                <button class="tool-btn tool-icon-wrap" title="Свободное рисование">
+                    <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                        <path d="M3 17c2.5-3 5-4.5 7.5-4.5S15 14 17.5 14s2.5-2.5 3.5-5"/>
+                        <path d="M3 20h7"/>
+                    </svg>
                 </button>
                 <button class="tool-btn tool-icon-wrap" title="Луч">
                     <svg class="tool-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M180-380q-42 0-71-29t-29-71q0-42 29-71t71-29q31 0 56 17t36 43h608v80H272q-11 26-36 43t-56 17Z"/></svg>

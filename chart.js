@@ -35,6 +35,7 @@ class CandlestickChart {
         this.ws = null; // WebSocket connection
         this.wsReconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
+        this.maxKlinesPerRequest = 1000; // Binance max limit per klines request
         this.livePriceLineConfig = {
             enabled: true,
             dash: [8, 6],
@@ -68,11 +69,15 @@ class CandlestickChart {
         this.alertMode = false; // Alert: один клик — горизонтальная прерывистая линия
         this.rectangleMode = false;
         this.rulerMode = false;
+        this.freeDrawMode = false;
         this.drawnLines = []; // Array to store drawn lines (brush tool)
+        this.freeDrawStrokes = []; // Array to store freehand strokes [{ id, points:[{time,price}, ...] }]
         this.horizontalLines = []; // Array to store horizontal rays
         this.rectangles = []; // Array to store rectangles
         this.rulerSelections = []; // Array to store ruler selections with data
         this.currentLine = null; // Current line being drawn (first point)
+        this.currentFreeDrawStroke = null; // Current freehand stroke being drawn
+        this.isFreeDrawing = false;
         this.currentRectangle = null; // Current rectangle being drawn (first point)
         this.currentRulerSelection = null; // Current ruler selection being drawn
         this.tempPoint = null; // Temporary point for preview
@@ -162,6 +167,8 @@ class CandlestickChart {
         this.mmDensityTolerancePct = 0.5; // допуск по расстоянию (%)
         this.mmVolumeToleranceRatio = 0.2; // допуск по объему (20%)
         this.drawingsStoragePrefix = 'chart.drawings.v1';
+        this.defaultsStorageKey = 'chart.defaults.v1';
+        this.applySavedModuleDefaults();
         
         // Bind resize
         window.addEventListener('resize', () => this.resize());
@@ -200,6 +207,63 @@ class CandlestickChart {
     normalizeDrawingId(rawId, prefix = 'd') {
         const id = String(rawId || '').trim();
         return id ? id : this.generateDrawingId(prefix);
+    }
+
+    deepCloneData(obj) {
+        try {
+            return JSON.parse(JSON.stringify(obj));
+        } catch (_error) {
+            return null;
+        }
+    }
+
+    getSavedModuleDefaults() {
+        try {
+            const raw = localStorage.getItem(this.defaultsStorageKey);
+            if (!raw) return {};
+            const parsed = JSON.parse(raw);
+            return (parsed && typeof parsed === 'object') ? parsed : {};
+        } catch (_error) {
+            return {};
+        }
+    }
+
+    saveModuleDefault(moduleKey, value) {
+        if (!moduleKey) return;
+        const defaults = this.getSavedModuleDefaults();
+        defaults[moduleKey] = this.deepCloneData(value);
+        try {
+            localStorage.setItem(this.defaultsStorageKey, JSON.stringify(defaults));
+        } catch (error) {
+            console.warn('Failed to save module defaults:', error);
+        }
+    }
+
+    applyDensityRuntimeBySize(sizeType) {
+        const thresholdMap = { all: 0, large: 2, medium: 1, small: 0.5 };
+        const anomalyMap = { all: 1, large: 10, medium: 7, small: 4 };
+        this.densityVolumePercentage = thresholdMap[sizeType] ?? 2;
+        this.densityAnomalyMultiplier = anomalyMap[sizeType] ?? 10;
+    }
+
+    applySavedModuleDefaults() {
+        const defaults = this.getSavedModuleDefaults();
+        if (defaults.indicators && typeof defaults.indicators === 'object') {
+            this.activeIndicators = this.deepCloneData(defaults.indicators) || this.activeIndicators;
+        }
+        if (defaults.values && typeof defaults.values === 'object') {
+            const valuesCfg = this.deepCloneData(defaults.values);
+            if (valuesCfg?.density) {
+                this.valuesConfig = valuesCfg;
+                this.applyDensityRuntimeBySize(valuesCfg.density.sizeType || 'large');
+            }
+        }
+        if (defaults.levels && typeof defaults.levels === 'object') {
+            const levelsCfg = this.deepCloneData(defaults.levels);
+            if (levelsCfg?.support && levelsCfg?.resistance) {
+                this.levelsConfig = levelsCfg;
+            }
+        }
     }
 
     serializeDrawingsForStorage() {
@@ -258,6 +322,17 @@ class CandlestickChart {
                 summary: normalizeSummary(selection?.summary)
             };
         };
+        const sanitizeFreeStroke = (stroke) => {
+            const points = Array.isArray(stroke?.points) ? stroke.points : [];
+            const normalized = points.map(point => {
+                const time = toFiniteNumber(point?.time);
+                const price = toFiniteNumber(point?.price);
+                if (time === null || price === null) return null;
+                return { time, price };
+            }).filter(Boolean);
+            if (normalized.length < 2) return null;
+            return { id: this.normalizeDrawingId(stroke?.id, 'free'), points: normalized };
+        };
         const sanitizeRuntimeAlert = (alertItem) => {
             const targetId = String(alertItem?.targetId || '').trim();
             const targetType = String(alertItem?.targetType || '').trim();
@@ -279,6 +354,7 @@ class CandlestickChart {
 
         return {
             drawnLines: this.drawnLines.map(sanitizeLine).filter(Boolean),
+            freeDrawStrokes: this.freeDrawStrokes.map(sanitizeFreeStroke).filter(Boolean),
             horizontalLines: this.horizontalLines.map(sanitizeRay).filter(Boolean),
             rectangles: this.rectangles.map(sanitizeRect).filter(Boolean),
             rulerSelections: this.rulerSelections.map(sanitizeRuler).filter(Boolean),
@@ -290,7 +366,7 @@ class CandlestickChart {
         try {
             const key = this.getDrawingsStorageKey();
             const payload = this.serializeDrawingsForStorage();
-            if (!payload.drawnLines.length && !payload.horizontalLines.length && !payload.rectangles.length && !payload.rulerSelections.length && !payload.lineAlerts.length) {
+            if (!payload.drawnLines.length && !payload.freeDrawStrokes.length && !payload.horizontalLines.length && !payload.rectangles.length && !payload.rulerSelections.length && !payload.lineAlerts.length) {
                 localStorage.removeItem(key);
                 return;
             }
@@ -306,6 +382,7 @@ class CandlestickChart {
             const raw = localStorage.getItem(key);
             if (!raw) {
                 this.drawnLines = [];
+                this.freeDrawStrokes = [];
                 this.horizontalLines = [];
                 this.rectangles = [];
                 this.rulerSelections = [];
@@ -326,6 +403,17 @@ class CandlestickChart {
                 time2: Number(item.time2),
                 price2: Number(item.price2)
             })) : [];
+            this.freeDrawStrokes = Array.isArray(data.freeDrawStrokes) ? data.freeDrawStrokes.filter(item =>
+                Array.isArray(item?.points) && item.points.length >= 2
+            ).map(item => ({
+                id: this.normalizeDrawingId(item.id, 'free'),
+                points: item.points.filter(point =>
+                    Number.isFinite(point?.time) && Number.isFinite(point?.price)
+                ).map(point => ({
+                    time: Number(point.time),
+                    price: Number(point.price)
+                }))
+            })).filter(item => item.points.length >= 2) : [];
             this.horizontalLines = Array.isArray(data.horizontalLines) ? data.horizontalLines.filter(item => {
                 const hasTrend = Number.isFinite(item?.time1) &&
                     Number.isFinite(item?.price1) &&
@@ -397,6 +485,7 @@ class CandlestickChart {
         } catch (error) {
             console.warn('Failed to load drawings from localStorage:', error);
             this.drawnLines = [];
+            this.freeDrawStrokes = [];
             this.horizontalLines = [];
             this.rectangles = [];
             this.rulerSelections = [];
@@ -438,16 +527,34 @@ class CandlestickChart {
             const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
             const currentTimeRange = this.visibleEndTime - this.visibleStartTime;
             const currentPriceRange = this.visibleMaxPrice - this.visibleMinPrice;
-            const mouseTime = this.xToTime(mouseX);
-            const mousePrice = this.yToPrice(mouseY);
-            const normalizedX = this.chartWidth > 0 ? (mouseX - this.padding.left) / this.chartWidth : 0.5;
-            const normalizedY = (this.padding.top + chartAreaHeight - mouseY) / chartAreaHeight;
             const newTimeRange = Math.max(this.timeRange * 0.005, currentTimeRange / zoomFactor);
             const newPriceRange = Math.max(this.priceRange * 0.005, currentPriceRange / zoomFactor);
-            let newStartTime = mouseTime - currentTimeRange * normalizedX * (newTimeRange / currentTimeRange);
+            const zoomIn = e.deltaY < 0;
+
+            // Временная ось: зум не от курсора.
+            // При увеличении последняя свеча стремится влево, при уменьшении — вправо.
+            const currentEndRatio = currentTimeRange > 0
+                ? (this.endTime - this.visibleStartTime) / currentTimeRange
+                : (this.chartEndPositionRatio || (2 / 3));
+            const targetEndRatio = zoomIn ? 0.12 : 0.88;
+            const nextEndRatio = Math.max(0.05, Math.min(0.95, currentEndRatio + (targetEndRatio - currentEndRatio) * 0.35));
+
+            let newStartTime = this.endTime - newTimeRange * nextEndRatio;
             let newEndTime = newStartTime + newTimeRange;
-            let newMinPrice = mousePrice - currentPriceRange * normalizedY * (newPriceRange / currentPriceRange);
-            let newMaxPrice = newMinPrice + newPriceRange;
+            const oneViewW = this.timeRange * 0.5;
+            if (newStartTime < this.startTime - oneViewW) {
+                newStartTime = this.startTime - oneViewW;
+                newEndTime = newStartTime + newTimeRange;
+            }
+            if (newEndTime > this.endTime + oneViewW) {
+                newEndTime = this.endTime + oneViewW;
+                newStartTime = newEndTime - newTimeRange;
+            }
+
+            // Ценовая ось: зум от центра видимого диапазона, а не от позиции курсора.
+            const centerPrice = (this.visibleMinPrice + this.visibleMaxPrice) / 2;
+            let newMinPrice = centerPrice - newPriceRange / 2;
+            let newMaxPrice = centerPrice + newPriceRange / 2;
             this.zoomLevel *= zoomFactor;
             this.visibleStartTime = newStartTime;
             this.visibleEndTime = newEndTime;
@@ -1064,7 +1171,7 @@ class CandlestickChart {
             }
             // Handle panning (when no drawing tools are active). Shift — только по времени, Alt — только по цене, иначе — по обеим осям.
             if (this.isPanning && !this.drawingMode && !this.horizontalLineMode && 
-                !this.rectangleMode && !this.rulerMode) {
+                !this.rectangleMode && !this.rulerMode && !this.freeDrawMode) {
                 const deltaX = x - this.panStartX;
                 const deltaY = y - this.panStartY;
                 const timeRange = this.panStartVisibleEndTime - this.panStartVisibleStartTime;
@@ -1127,6 +1234,23 @@ class CandlestickChart {
                 this.draw();
                 return;
             }
+
+            // Freehand drawing while left mouse is pressed.
+            if (this.freeDrawMode && this.isFreeDrawing && this.currentFreeDrawStroke) {
+                const chartAreaHeight = this.chartHeight - this.volumeHeight;
+                const maxX = this.logicalWidth - this.padding.right;
+                const maxY = this.padding.top + chartAreaHeight;
+                const clampedX = Math.max(this.padding.left, Math.min(maxX, x));
+                const clampedY = Math.max(this.padding.top, Math.min(maxY, y));
+                const lastPoint = this.currentFreeDrawStroke[this.currentFreeDrawStroke.length - 1];
+                const dx = clampedX - lastPoint.x;
+                const dy = clampedY - lastPoint.y;
+                if ((dx * dx + dy * dy) >= 1) {
+                    this.currentFreeDrawStroke.push({ x: clampedX, y: clampedY });
+                    this.draw();
+                }
+                return;
+            }
             
             // Preview for rectangle mode
             if (this.rectangleMode && this.currentRectangle) {
@@ -1143,6 +1267,7 @@ class CandlestickChart {
         // Mouse click handler
         this.canvas.addEventListener('click', (e) => {
             this.hideDrawingAlertContextMenu();
+            if (this.freeDrawMode) return;
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
@@ -1289,6 +1414,7 @@ class CandlestickChart {
             e.preventDefault();
             const s = this.selectedDrawing;
             if (s.type === 'line') this.drawnLines.splice(s.index, 1);
+            else if (s.type === 'free') this.freeDrawStrokes.splice(s.index, 1);
             else if (s.type === 'rect') this.rectangles.splice(s.index, 1);
             else if (s.type === 'ray') this.horizontalLines.splice(s.index, 1);
             else if (s.type === 'ruler') this.rulerSelections.splice(s.index, 1);
@@ -1304,8 +1430,22 @@ class CandlestickChart {
                 this.hideDrawingAlertContextMenu();
                 this.hideLivePriceTimerContextMenu();
             }
+            if (this.freeDrawMode && e.button === 0) {
+                const rect = this.canvas.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                const chartAreaHeight = this.chartHeight - this.volumeHeight;
+                if (x < this.padding.left || x > this.logicalWidth - this.padding.right ||
+                    y < this.padding.top || y > this.padding.top + chartAreaHeight) {
+                    return;
+                }
+                this.isFreeDrawing = true;
+                this.currentFreeDrawStroke = [{ x, y }];
+                this.draw();
+                return;
+            }
             if (!this.drawingMode && !this.horizontalLineMode && !this.alertMode &&
-                !this.rectangleMode && !this.rulerMode) {
+                !this.rectangleMode && !this.rulerMode && !this.freeDrawMode) {
                 const rect = this.canvas.getBoundingClientRect();
                 const x = e.clientX - rect.left;
                 const y = e.clientY - rect.top;
@@ -1366,6 +1506,21 @@ class CandlestickChart {
         // Mouse up: отпускание кнопки завершает панорамирование и масштабирование
         this.canvas.addEventListener('mouseup', (e) => {
             if (e.button === 0) {
+                if (this.freeDrawMode && this.isFreeDrawing && Array.isArray(this.currentFreeDrawStroke)) {
+                    this.isFreeDrawing = false;
+                    if (this.currentFreeDrawStroke.length >= 2) {
+                        this.freeDrawStrokes.push({
+                            id: this.generateDrawingId('free'),
+                            points: this.currentFreeDrawStroke.map(point => ({
+                                time: this.xToTime(point.x),
+                                price: this.yToPrice(point.y)
+                            }))
+                        });
+                        this.saveDrawingsToStorage();
+                    }
+                    this.currentFreeDrawStroke = null;
+                    this.draw();
+                }
                 const hadDraggedDrawing = !!this.draggedDrawing;
                 this.draggedDrawing = null;
                 this.isZoomDragging = false;
@@ -1400,6 +1555,20 @@ class CandlestickChart {
                 this.crosshair.active = false;
                 this.draw();
             }
+            if (this.freeDrawMode && this.isFreeDrawing && Array.isArray(this.currentFreeDrawStroke)) {
+                this.isFreeDrawing = false;
+                if (this.currentFreeDrawStroke.length >= 2) {
+                    this.freeDrawStrokes.push({
+                        id: this.generateDrawingId('free'),
+                        points: this.currentFreeDrawStroke.map(point => ({
+                            time: this.xToTime(point.x),
+                            price: this.yToPrice(point.y)
+                        }))
+                    });
+                    this.saveDrawingsToStorage();
+                }
+                this.currentFreeDrawStroke = null;
+            }
         });
         
         // Правая кнопка мыши: отменить текущее рисование или удалить элемент при клике по линии/прямоугольнику/лучу
@@ -1422,6 +1591,12 @@ class CandlestickChart {
                 this.draw();
                 return;
             }
+            if (this.freeDrawMode && this.isFreeDrawing) {
+                this.isFreeDrawing = false;
+                this.currentFreeDrawStroke = null;
+                this.draw();
+                return;
+            }
             const rect = this.canvas.getBoundingClientRect();
             const x = e.clientX - rect.left;
             const y = e.clientY - rect.top;
@@ -1432,6 +1607,15 @@ class CandlestickChart {
             }
             const hit = this.hitTestDrawnElements(x, y);
             if (hit) {
+                if (hit.type === 'free') {
+                    this.freeDrawStrokes.splice(hit.index, 1);
+                    this.selectedDrawing = null;
+                    this.saveDrawingsToStorage();
+                    this.draw();
+                    this.hideDrawingAlertContextMenu();
+                    this.hideLivePriceTimerContextMenu();
+                    return;
+                }
                 if (hit.type === 'line' || hit.type === 'ray' || hit.type === 'rect') {
                     this.selectedDrawing = hit;
                     this.hideLivePriceTimerContextMenu();
@@ -1458,7 +1642,7 @@ class CandlestickChart {
             const y = e.clientY - rect.top;
             const isOnCanvas = x >= 0 && x <= this.logicalWidth && y >= 0 && y <= this.logicalHeight;
             
-            if (this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode) {
+            if (this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode || this.freeDrawMode) {
                 this.canvas.style.cursor = 'crosshair';
             } else if (this.draggedDrawing) {
                 this.canvas.style.cursor = 'grabbing';
@@ -1631,10 +1815,13 @@ class CandlestickChart {
             this.alertMode = false;
             this.rectangleMode = false;
             this.rulerMode = false;
+            this.freeDrawMode = false;
+            this.currentFreeDrawStroke = null;
+            this.isFreeDrawing = false;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
         }
-        this.canvas.style.cursor = (enabled || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode || this.freeDrawMode) ? 'crosshair' : 'default';
     }
     
     setHorizontalLineMode(enabled) {
@@ -1644,12 +1831,15 @@ class CandlestickChart {
             this.alertMode = false;
             this.rectangleMode = false;
             this.rulerMode = false;
+            this.freeDrawMode = false;
+            this.currentFreeDrawStroke = null;
+            this.isFreeDrawing = false;
             this.currentLine = null;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
             this.tempPoint = null;
         }
-        this.canvas.style.cursor = (enabled || this.drawingMode || this.alertMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.alertMode || this.rectangleMode || this.rulerMode || this.freeDrawMode) ? 'crosshair' : 'default';
     }
     
     setAlertMode(enabled) {
@@ -1659,12 +1849,15 @@ class CandlestickChart {
             this.horizontalLineMode = false;
             this.rectangleMode = false;
             this.rulerMode = false;
+            this.freeDrawMode = false;
+            this.currentFreeDrawStroke = null;
+            this.isFreeDrawing = false;
             this.currentLine = null;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
             this.tempPoint = null;
         }
-        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.rectangleMode || this.rulerMode || this.freeDrawMode) ? 'crosshair' : 'default';
     }
     
     setRectangleMode(enabled) {
@@ -1674,12 +1867,15 @@ class CandlestickChart {
             this.horizontalLineMode = false;
             this.alertMode = false;
             this.rulerMode = false;
+            this.freeDrawMode = false;
+            this.currentFreeDrawStroke = null;
+            this.isFreeDrawing = false;
             this.currentLine = null;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
             this.tempPoint = null;
         }
-        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.alertMode || this.rulerMode) ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.alertMode || this.rulerMode || this.freeDrawMode) ? 'crosshair' : 'default';
     }
     
     setRulerMode(enabled) {
@@ -1689,12 +1885,35 @@ class CandlestickChart {
             this.horizontalLineMode = false;
             this.alertMode = false;
             this.rectangleMode = false;
+            this.freeDrawMode = false;
+            this.currentFreeDrawStroke = null;
+            this.isFreeDrawing = false;
             this.currentLine = null;
             this.currentRectangle = null;
             this.currentRulerSelection = null;
             this.tempPoint = null;
         }
-        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode) ? 'crosshair' : 'default';
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.freeDrawMode) ? 'crosshair' : 'default';
+    }
+
+    setFreeDrawMode(enabled) {
+        this.freeDrawMode = enabled;
+        if (!enabled) {
+            this.currentFreeDrawStroke = null;
+            this.isFreeDrawing = false;
+        }
+        if (enabled) {
+            this.drawingMode = false;
+            this.horizontalLineMode = false;
+            this.alertMode = false;
+            this.rectangleMode = false;
+            this.rulerMode = false;
+            this.currentLine = null;
+            this.currentRectangle = null;
+            this.currentRulerSelection = null;
+            this.tempPoint = null;
+        }
+        this.canvas.style.cursor = (enabled || this.drawingMode || this.horizontalLineMode || this.alertMode || this.rectangleMode || this.rulerMode) ? 'crosshair' : 'default';
     }
     
     calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice) {
@@ -1773,6 +1992,22 @@ class CandlestickChart {
         const maxY = this.padding.top + chartAreaHeight;
         const maxX = this.logicalWidth - this.padding.right;
         const threshold = 10;
+        for (let i = this.freeDrawStrokes.length - 1; i >= 0; i--) {
+            const stroke = this.freeDrawStrokes[i];
+            if (!stroke || !Array.isArray(stroke.points) || stroke.points.length < 2) continue;
+            for (let j = 0; j < stroke.points.length - 1; j++) {
+                const p1 = stroke.points[j];
+                const p2 = stroke.points[j + 1];
+                const x1 = this.timeToX(p1.time);
+                const y1 = this.priceToY(p1.price);
+                const x2 = this.timeToX(p2.time);
+                const y2 = this.priceToY(p2.price);
+                if (!Number.isFinite(x1) || !Number.isFinite(y1) || !Number.isFinite(x2) || !Number.isFinite(y2)) continue;
+                if (this.distanceToSegment(px, py, x1, y1, x2, y2) <= threshold) {
+                    return { type: 'free', index: i };
+                }
+            }
+        }
         for (let i = this.rectangles.length - 1; i >= 0; i--) {
             const rect = this.rectangles[i];
             let x1, y1, x2, y2;
@@ -1852,11 +2087,14 @@ class CandlestickChart {
     
     clearDrawnLines() {
         this.drawnLines = [];
+        this.freeDrawStrokes = [];
         this.horizontalLines = [];
         this.rectangles = [];
         this.rulerSelections = [];
         this.lineAlerts = [];
         this.currentLine = null;
+        this.currentFreeDrawStroke = null;
+        this.isFreeDrawing = false;
         this.currentRectangle = null;
         this.currentRulerSelection = null;
         this.tempPoint = null;
@@ -1904,13 +2142,14 @@ class CandlestickChart {
         }
     }
     
-    async loadBinanceData(symbol = 'BTCUSDT', interval = '1d', limit = 500) {
+    async loadBinanceData(symbol = 'BTCUSDT', interval = '1d', limit = this.maxKlinesPerRequest) {
         try {
             // First, load historical data via REST API for initial display
             console.log(`Loading ${limit} historical candles for ${symbol} with interval ${interval}...`);
             
             // Binance REST API endpoint for klines (candlestick data)
-            const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
+            const safeLimit = Math.max(1, Math.min(this.maxKlinesPerRequest, Number(limit) || this.maxKlinesPerRequest));
+            const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${safeLimit}`;
             
             const response = await fetch(url);
             if (!response.ok) {
@@ -2174,7 +2413,7 @@ class CandlestickChart {
         this.interval = newInterval;
         
         // Reload data with new interval
-        await this.loadBinanceData(this.symbol, newInterval, 500);
+        await this.loadBinanceData(this.symbol, newInterval, this.maxKlinesPerRequest);
     }
     
     updatePriceLevels() {
@@ -2397,6 +2636,8 @@ class CandlestickChart {
         }
         
         this.refreshRulerSummaries();
+        if (this.valuesConfig?.density?.enabled) this.startDensityUpdates();
+        else this.stopDensityUpdates();
         this.updateTopBarMetrics();
         
         // Initial resize and draw
@@ -3277,10 +3518,11 @@ class CandlestickChart {
     
     drawDrawnLines() {
         const hasBrushLines = this.drawnLines.length > 0 || (this.drawingMode && this.currentLine && this.tempPoint);
+        const hasFreeDraw = this.freeDrawStrokes.length > 0 || (this.freeDrawMode && Array.isArray(this.currentFreeDrawStroke) && this.currentFreeDrawStroke.length > 1);
         const hasHorizontalLines = this.horizontalLines.length > 0;
         const hasRectangles = this.rectangles.length > 0 || (this.currentRectangle && this.tempPoint);
         
-        if (!hasBrushLines && !hasHorizontalLines && !hasRectangles) {
+        if (!hasBrushLines && !hasFreeDraw && !hasHorizontalLines && !hasRectangles) {
             return;
         }
         
@@ -3356,13 +3598,13 @@ class CandlestickChart {
         // Draw rectangles
         if (hasRectangles) {
             this.ctx.strokeStyle = '#4a9eff';
-            this.ctx.lineWidth = 2;
+            this.ctx.lineWidth = 0.6;
             
             // Draw completed rectangles
             this.rectangles.forEach((rect, index) => {
                 const selected = this.selectedDrawing?.type === 'rect' && this.selectedDrawing?.index === index;
-                this.ctx.strokeStyle = selected ? '#ffa726' : '#4a9eff';
-                this.ctx.lineWidth = selected ? 4 : 2;
+                this.ctx.strokeStyle = '#4a9eff';
+                this.ctx.lineWidth = selected ? 1.2 : 0.6;
                 let x1, y1, x2, y2;
                 if (rect.time1 != null && rect.price1 != null) {
                     x1 = this.timeToX(rect.time1);
@@ -3383,7 +3625,7 @@ class CandlestickChart {
                 if (clippedWidth > 0 && clippedHeight > 0) {
                     this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
                 }
-                this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
+                this.ctx.fillStyle = '#4a9eff';
                 if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                     this.ctx.beginPath();
                     this.ctx.arc(x1, y1, selected ? 5 : 4, 0, Math.PI * 2);
@@ -3399,7 +3641,7 @@ class CandlestickChart {
             // Draw current rectangle being created (with preview)
             if (this.currentRectangle && this.tempPoint) {
                 this.ctx.strokeStyle = '#4a9eff';
-                this.ctx.lineWidth = 2;
+                this.ctx.lineWidth = 0.6;
                 let x = Math.min(this.currentRectangle.x1, this.tempPoint.x);
                 let y = Math.min(this.currentRectangle.y1, this.tempPoint.y);
                 let width = Math.abs(this.tempPoint.x - this.currentRectangle.x1);
@@ -3440,13 +3682,13 @@ class CandlestickChart {
         // Draw brush lines
         if (hasBrushLines) {
             this.ctx.strokeStyle = '#4a9eff';
-            this.ctx.lineWidth = 2;
+            this.ctx.lineWidth = 0.6;
             
             // Draw completed lines
             this.drawnLines.forEach((line, index) => {
                 const selected = this.selectedDrawing?.type === 'line' && this.selectedDrawing?.index === index;
-                this.ctx.strokeStyle = selected ? '#ffa726' : '#4a9eff';
-                this.ctx.lineWidth = selected ? 4 : 2;
+                this.ctx.strokeStyle = '#4a9eff';
+                this.ctx.lineWidth = selected ? 1.2 : 0.6;
                 let x1, y1, x2, y2;
                 if (line.time1 != null && line.price1 != null) {
                     x1 = this.timeToX(line.time1);
@@ -3466,7 +3708,7 @@ class CandlestickChart {
                     this.ctx.moveTo(c1x, c1y);
                     this.ctx.lineTo(c2x, c2y);
                     this.ctx.stroke();
-                    this.ctx.fillStyle = selected ? '#ffa726' : '#4a9eff';
+                    this.ctx.fillStyle = '#4a9eff';
                     if (x1 >= minX && x1 <= maxX && y1 >= minY && y1 <= maxY) {
                         this.ctx.beginPath();
                         this.ctx.arc(x1, y1, selected ? 5 : 3, 0, Math.PI * 2);
@@ -3512,6 +3754,45 @@ class CandlestickChart {
                     this.ctx.arc(this.tempPoint.x, this.tempPoint.y, 3, 0, Math.PI * 2);
                     this.ctx.fill();
                 }
+            }
+        }
+
+        // Draw freehand strokes
+        if (hasFreeDraw) {
+            this.ctx.strokeStyle = '#4a9eff';
+            this.ctx.lineWidth = 2;
+            this.ctx.lineJoin = 'round';
+            this.ctx.lineCap = 'round';
+            this.ctx.setLineDash([]);
+
+            this.freeDrawStrokes.forEach(stroke => {
+                if (!stroke || !Array.isArray(stroke.points) || stroke.points.length < 2) return;
+                this.ctx.beginPath();
+                let moved = false;
+                for (let i = 0; i < stroke.points.length; i++) {
+                    const point = stroke.points[i];
+                    const x = this.timeToX(point.time);
+                    const y = this.priceToY(point.price);
+                    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+                    if (!moved) {
+                        this.ctx.moveTo(this.snapHalfPixel(x), this.snapHalfPixel(y));
+                        moved = true;
+                    } else {
+                        this.ctx.lineTo(this.snapHalfPixel(x), this.snapHalfPixel(y));
+                    }
+                }
+                if (moved) this.ctx.stroke();
+            });
+
+            if (this.freeDrawMode && Array.isArray(this.currentFreeDrawStroke) && this.currentFreeDrawStroke.length > 1) {
+                this.ctx.globalAlpha = 0.85;
+                this.ctx.beginPath();
+                this.currentFreeDrawStroke.forEach((point, i) => {
+                    if (i === 0) this.ctx.moveTo(this.snapHalfPixel(point.x), this.snapHalfPixel(point.y));
+                    else this.ctx.lineTo(this.snapHalfPixel(point.x), this.snapHalfPixel(point.y));
+                });
+                this.ctx.stroke();
+                this.ctx.globalAlpha = 1;
             }
         }
         
@@ -5043,6 +5324,7 @@ function setupLevelsModal(chart) {
     const btn = document.getElementById('levelsBtn');
     const closeBtn = document.getElementById('levelsModalClose');
     const saveBtn = document.getElementById('levelsSave');
+    const saveDefaultBtn = document.getElementById('levelsSaveDefault');
     const resetBtn = document.getElementById('levelsReset');
     const titleEl = document.getElementById('levelsConfigTitle');
     if (!modal || !btn || !chart) return;
@@ -5051,10 +5333,9 @@ function setupLevelsModal(chart) {
     const resistanceListItem = modal.querySelector('.levels-item[data-level="resistance"]');
     const supportPanel = document.getElementById('levelSupportConfig');
     const resistancePanel = document.getElementById('levelResistanceConfig');
-    const supportListCheckbox = document.getElementById('levelSupportEn');
-    const resistanceListCheckbox = document.getElementById('levelResistanceEn');
     const supportColor = document.getElementById('levelSupportColor');
     const resistanceColor = document.getElementById('levelResistanceColor');
+    let contextMenuEl = null;
 
     function showLevel(level) {
         const isSupport = level === 'support';
@@ -5067,42 +5348,108 @@ function setupLevelsModal(chart) {
 
     function syncFromChart() {
         const cfg = chart.levelsConfig || {};
-        if (supportListCheckbox) supportListCheckbox.checked = !!cfg.support?.enabled;
-        if (resistanceListCheckbox) resistanceListCheckbox.checked = !!cfg.resistance?.enabled;
         if (supportColor) supportColor.value = cfg.support?.color || '#00bcd4';
         if (resistanceColor) resistanceColor.value = cfg.resistance?.color || '#ff5252';
         showLevel('support');
+        syncButtonActiveState();
     }
 
     function closeModal() {
         modal.classList.remove('open');
-        btn.classList.remove('active');
     }
 
     function openModal() {
         syncFromChart();
         modal.classList.add('open');
-        btn.classList.add('active');
+    }
+
+    function syncButtonActiveState() {
+        const supportEnabled = !!chart.levelsConfig?.support?.enabled;
+        const resistanceEnabled = !!chart.levelsConfig?.resistance?.enabled;
+        btn.classList.toggle('active', supportEnabled || resistanceEnabled);
+    }
+
+    function toggleLevelsEnabledByLeftClick() {
+        const currentlyEnabled = !!chart.levelsConfig?.support?.enabled || !!chart.levelsConfig?.resistance?.enabled;
+        chart.levelsConfig = {
+            support: { enabled: !currentlyEnabled, color: supportColor?.value || chart.levelsConfig?.support?.color || '#00bcd4' },
+            resistance: { enabled: !currentlyEnabled, color: resistanceColor?.value || chart.levelsConfig?.resistance?.color || '#ff5252' }
+        };
+        syncButtonActiveState();
+        chart.draw();
+    }
+
+    function hideContextMenu() {
+        if (!contextMenuEl) return;
+        contextMenuEl.style.display = 'none';
+    }
+
+    function showContextMenu(clientX, clientY) {
+        if (!contextMenuEl) {
+            const menu = document.createElement('div');
+            menu.style.position = 'fixed';
+            menu.style.zIndex = '10020';
+            menu.style.display = 'none';
+            menu.style.background = '#1f1f1f';
+            menu.style.border = '1px solid #3a3a3a';
+            menu.style.borderRadius = '8px';
+            menu.style.padding = '6px';
+            menu.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.35)';
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.textContent = 'Настроить';
+            item.style.width = '100%';
+            item.style.height = '30px';
+            item.style.textAlign = 'left';
+            item.style.background = 'transparent';
+            item.style.color = '#e8e8e8';
+            item.style.border = 'none';
+            item.style.borderRadius = '6px';
+            item.style.padding = '0 8px';
+            item.style.cursor = 'pointer';
+            item.addEventListener('mouseenter', () => { item.style.background = '#2a2a2a'; });
+            item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+            item.addEventListener('click', () => {
+                hideContextMenu();
+                openModal();
+            });
+            menu.appendChild(item);
+            document.body.appendChild(menu);
+            contextMenuEl = menu;
+            document.addEventListener('pointerdown', (e) => {
+                if (!contextMenuEl || contextMenuEl.style.display === 'none') return;
+                if (!contextMenuEl.contains(e.target)) hideContextMenu();
+            });
+            window.addEventListener('resize', hideContextMenu);
+            window.addEventListener('scroll', hideContextMenu, true);
+        }
+        contextMenuEl.style.display = 'block';
+        const margin = 8;
+        const rect = contextMenuEl.getBoundingClientRect();
+        const left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, clientX + 6));
+        const top = Math.max(margin, Math.min(window.innerHeight - rect.height - margin, clientY + 6));
+        contextMenuEl.style.left = `${left}px`;
+        contextMenuEl.style.top = `${top}px`;
     }
 
     function saveFromModal() {
         chart.levelsConfig = {
-            support: { enabled: !!supportListCheckbox?.checked, color: supportColor?.value || '#00bcd4' },
-            resistance: { enabled: !!resistanceListCheckbox?.checked, color: resistanceColor?.value || '#ff5252' }
+            support: { enabled: !!chart.levelsConfig?.support?.enabled, color: supportColor?.value || '#00bcd4' },
+            resistance: { enabled: !!chart.levelsConfig?.resistance?.enabled, color: resistanceColor?.value || '#ff5252' }
         };
+        syncButtonActiveState();
         chart.draw();
         closeModal();
     }
 
     function resetModal() {
-        if (supportListCheckbox) supportListCheckbox.checked = false;
-        if (resistanceListCheckbox) resistanceListCheckbox.checked = false;
         if (supportColor) supportColor.value = '#00bcd4';
         if (resistanceColor) resistanceColor.value = '#ff5252';
         chart.levelsConfig = {
             support: { enabled: false, color: '#00bcd4' },
             resistance: { enabled: false, color: '#ff5252' }
         };
+        syncButtonActiveState();
         chart.draw();
     }
 
@@ -5113,13 +5460,26 @@ function setupLevelsModal(chart) {
         showLevel('resistance');
     });
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', (e) => {
+        if (e.button !== 0) return;
+        hideContextMenu();
+        toggleLevelsEnabledByLeftClick();
+    });
+    btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showContextMenu(e.clientX, e.clientY);
+    });
     closeBtn?.addEventListener('click', closeModal);
     saveBtn?.addEventListener('click', saveFromModal);
+    saveDefaultBtn?.addEventListener('click', () => {
+        saveFromModal();
+        chart.saveModuleDefault('levels', chart.levelsConfig);
+    });
     resetBtn?.addEventListener('click', resetModal);
     modal.addEventListener('click', (e) => {
         if (e.target === modal) closeModal();
     });
+    syncButtonActiveState();
 }
 
 function setupValuesModal(chart) {
@@ -5127,46 +5487,127 @@ function setupValuesModal(chart) {
     const btn = document.getElementById('valuesBtn');
     const closeBtn = document.getElementById('valuesModalClose');
     const saveBtn = document.getElementById('valuesSave');
+    const saveDefaultBtn = document.getElementById('valuesSaveDefault');
     const resetBtn = document.getElementById('valuesReset');
     const titleEl = document.getElementById('valuesConfigTitle');
     if (!modal || !btn || !chart) return;
 
     const densityItem = modal.querySelector('.values-item[data-value="density"]');
-    const densityListCheckbox = document.getElementById('valueDensityEn');
     const densitySize = document.getElementById('valueDensitySize');
     const densityMmCheckbox = document.getElementById('valueDensityMmEn');
     const densityColor = document.getElementById('valueDensityColor');
+    let contextMenuEl = null;
 
     function syncFromChart() {
         const cfg = chart.valuesConfig || {};
-        if (densityListCheckbox) densityListCheckbox.checked = !!cfg.density?.enabled;
         if (densitySize) densitySize.value = cfg.density?.sizeType || 'large';
         if (densityMmCheckbox) densityMmCheckbox.checked = !!cfg.density?.mmEnabled;
         if (densityColor) densityColor.value = cfg.density?.color || '#ff5252';
         densityItem?.classList.add('selected');
         if (titleEl) titleEl.textContent = 'Плотности';
+        syncButtonActiveState();
     }
 
     function closeModal() {
         modal.classList.remove('open');
-        btn.classList.remove('active');
     }
 
     function openModal() {
         syncFromChart();
         modal.classList.add('open');
-        btn.classList.add('active');
+    }
+
+    function syncButtonActiveState() {
+        btn.classList.toggle('active', !!chart.valuesConfig?.density?.enabled);
+    }
+
+    function applyDensityRuntimeBySize(sizeType) {
+        chart.applyDensityRuntimeBySize(sizeType);
+    }
+
+    function toggleDensityEnabledByLeftClick() {
+        const enabled = !!chart.valuesConfig?.density?.enabled;
+        const sizeType = chart.valuesConfig?.density?.sizeType || densitySize?.value || 'large';
+        const color = chart.valuesConfig?.density?.color || densityColor?.value || '#ff5252';
+        const mmEnabled = !!chart.valuesConfig?.density?.mmEnabled;
+        chart.valuesConfig = {
+            density: {
+                enabled: !enabled,
+                color,
+                sizeType,
+                mmEnabled
+            }
+        };
+        applyDensityRuntimeBySize(sizeType);
+        if (chart.valuesConfig.density.enabled) chart.startDensityUpdates();
+        else {
+            chart.stopDensityUpdates();
+            chart.densityData = null;
+            chart.densityAppearance = { bid: null, ask: null };
+        }
+        syncButtonActiveState();
+        chart.draw();
+    }
+
+    function hideContextMenu() {
+        if (!contextMenuEl) return;
+        contextMenuEl.style.display = 'none';
+    }
+
+    function showContextMenu(clientX, clientY) {
+        if (!contextMenuEl) {
+            const menu = document.createElement('div');
+            menu.style.position = 'fixed';
+            menu.style.zIndex = '10020';
+            menu.style.display = 'none';
+            menu.style.background = '#1f1f1f';
+            menu.style.border = '1px solid #3a3a3a';
+            menu.style.borderRadius = '8px';
+            menu.style.padding = '6px';
+            menu.style.boxShadow = '0 8px 24px rgba(0, 0, 0, 0.35)';
+            const item = document.createElement('button');
+            item.type = 'button';
+            item.textContent = 'Настроить';
+            item.style.width = '100%';
+            item.style.height = '30px';
+            item.style.textAlign = 'left';
+            item.style.background = 'transparent';
+            item.style.color = '#e8e8e8';
+            item.style.border = 'none';
+            item.style.borderRadius = '6px';
+            item.style.padding = '0 8px';
+            item.style.cursor = 'pointer';
+            item.addEventListener('mouseenter', () => { item.style.background = '#2a2a2a'; });
+            item.addEventListener('mouseleave', () => { item.style.background = 'transparent'; });
+            item.addEventListener('click', () => {
+                hideContextMenu();
+                openModal();
+            });
+            menu.appendChild(item);
+            document.body.appendChild(menu);
+            contextMenuEl = menu;
+            document.addEventListener('pointerdown', (e) => {
+                if (!contextMenuEl || contextMenuEl.style.display === 'none') return;
+                if (!contextMenuEl.contains(e.target)) hideContextMenu();
+            });
+            window.addEventListener('resize', hideContextMenu);
+            window.addEventListener('scroll', hideContextMenu, true);
+        }
+        contextMenuEl.style.display = 'block';
+        const margin = 8;
+        const rect = contextMenuEl.getBoundingClientRect();
+        const left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, clientX + 6));
+        const top = Math.max(margin, Math.min(window.innerHeight - rect.height - margin, clientY + 6));
+        contextMenuEl.style.left = `${left}px`;
+        contextMenuEl.style.top = `${top}px`;
     }
 
     function saveFromModal() {
         const sizeType = densitySize?.value || 'large';
-        const thresholdMap = { large: 2, medium: 1, small: 0.5 };
-        const anomalyMap = { large: 10, medium: 7, small: 4 };
-        chart.densityVolumePercentage = thresholdMap[sizeType] ?? 2;
-        chart.densityAnomalyMultiplier = anomalyMap[sizeType] ?? 10;
+        applyDensityRuntimeBySize(sizeType);
         chart.valuesConfig = {
             density: {
-                enabled: !!densityListCheckbox?.checked,
+                enabled: !!chart.valuesConfig?.density?.enabled,
                 color: densityColor?.value || '#ff5252',
                 sizeType,
                 mmEnabled: !!densityMmCheckbox?.checked
@@ -5178,12 +5619,12 @@ function setupValuesModal(chart) {
             chart.densityData = null;
             chart.densityAppearance = { bid: null, ask: null };
         }
+        syncButtonActiveState();
         chart.draw();
         closeModal();
     }
 
     function resetModal() {
-        if (densityListCheckbox) densityListCheckbox.checked = false;
         if (densitySize) densitySize.value = 'large';
         if (densityMmCheckbox) densityMmCheckbox.checked = false;
         if (densityColor) densityColor.value = '#ff5252';
@@ -5193,18 +5634,32 @@ function setupValuesModal(chart) {
         chart.stopDensityUpdates();
         chart.densityData = null;
         chart.densityAppearance = { bid: null, ask: null };
+        syncButtonActiveState();
         chart.draw();
     }
 
     densityItem?.addEventListener('click', () => densityItem.classList.add('selected'));
 
-    btn.addEventListener('click', openModal);
+    btn.addEventListener('click', (e) => {
+        if (e.button !== 0) return;
+        hideContextMenu();
+        toggleDensityEnabledByLeftClick();
+    });
+    btn.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        showContextMenu(e.clientX, e.clientY);
+    });
     closeBtn?.addEventListener('click', closeModal);
     saveBtn?.addEventListener('click', saveFromModal);
+    saveDefaultBtn?.addEventListener('click', () => {
+        saveFromModal();
+        chart.saveModuleDefault('values', chart.valuesConfig);
+    });
     resetBtn?.addEventListener('click', resetModal);
     modal.addEventListener('click', (e) => {
         if (e.target === modal) closeModal();
     });
+    syncButtonActiveState();
 }
 
 function setupIndicatorsModal(chart) {
@@ -5212,6 +5667,7 @@ function setupIndicatorsModal(chart) {
     const btn = document.getElementById('indicatorsBtn');
     const closeBtn = document.getElementById('indicatorsModalClose');
     const saveBtn = document.getElementById('indicatorsSave');
+    const saveDefaultBtn = document.getElementById('indicatorsSaveDefault');
     const resetBtn = document.getElementById('indicatorsReset');
     const tabs = modal.querySelectorAll('.indicators-tab');
     
@@ -5883,6 +6339,10 @@ function setupIndicatorsModal(chart) {
         if (e.target === modal) closeModal();
     });
     saveBtn?.addEventListener('click', saveFromModal);
+    saveDefaultBtn?.addEventListener('click', () => {
+        saveFromModal();
+        chart.saveModuleDefault('indicators', chart.activeIndicators);
+    });
     resetBtn?.addEventListener('click', () => {
         chart.activeIndicators.ma = [];
         chart.activeIndicators.ema = [];
@@ -6029,6 +6489,7 @@ function setupIndicatorsModal(chart) {
 function setupToolButtons(chart) {
     const alertBtn = document.querySelector('.tool-btn[title="Горзонтальная линия"]');
     const brushBtn = document.querySelector('.tool-btn[title="Трендовая линия"]');
+    const freeDrawBtn = document.querySelector('.tool-btn[title="Свободное рисование"]');
     const horizontalLineBtn = document.querySelector('.tool-btn[title="Луч"]');
     const rectangleBtn = document.querySelector('.tool-btn[title="Прямоугольник"]');
     const rulerBtn = document.querySelector('.tool-btn[title="Линейка"]');
@@ -6050,6 +6511,7 @@ function setupToolButtons(chart) {
             if (!isActive) {
                 alertBtn.classList.add('active');
                 if (brushBtn) brushBtn.classList.remove('active');
+                if (freeDrawBtn) freeDrawBtn.classList.remove('active');
                 if (horizontalLineBtn) horizontalLineBtn.classList.remove('active');
                 if (rectangleBtn) rectangleBtn.classList.remove('active');
                 if (rulerBtn) rulerBtn.classList.remove('active');
@@ -6066,11 +6528,29 @@ function setupToolButtons(chart) {
             if (!isActive) {
                 brushBtn.classList.add('active');
                 deactivateAlert();
+                if (freeDrawBtn) freeDrawBtn.classList.remove('active');
                 if (horizontalLineBtn) horizontalLineBtn.classList.remove('active');
                 if (rectangleBtn) rectangleBtn.classList.remove('active');
                 if (rulerBtn) rulerBtn.classList.remove('active');
             } else {
                 brushBtn.classList.remove('active');
+            }
+        });
+    }
+
+    if (freeDrawBtn) {
+        freeDrawBtn.addEventListener('click', () => {
+            const isActive = chart.freeDrawMode;
+            chart.setFreeDrawMode(!isActive);
+            if (!isActive) {
+                freeDrawBtn.classList.add('active');
+                if (brushBtn) brushBtn.classList.remove('active');
+                deactivateAlert();
+                if (horizontalLineBtn) horizontalLineBtn.classList.remove('active');
+                if (rectangleBtn) rectangleBtn.classList.remove('active');
+                if (rulerBtn) rulerBtn.classList.remove('active');
+            } else {
+                freeDrawBtn.classList.remove('active');
             }
         });
     }
@@ -6082,6 +6562,7 @@ function setupToolButtons(chart) {
             if (!isActive) {
                 horizontalLineBtn.classList.add('active');
                 if (brushBtn) brushBtn.classList.remove('active');
+                if (freeDrawBtn) freeDrawBtn.classList.remove('active');
                 deactivateAlert();
                 if (rectangleBtn) rectangleBtn.classList.remove('active');
                 if (rulerBtn) rulerBtn.classList.remove('active');
@@ -6101,6 +6582,7 @@ function setupToolButtons(chart) {
             if (!isActive) {
                 rectangleBtn.classList.add('active');
                 if (brushBtn) brushBtn.classList.remove('active');
+                if (freeDrawBtn) freeDrawBtn.classList.remove('active');
                 if (horizontalLineBtn) horizontalLineBtn.classList.remove('active');
                 if (rulerBtn) rulerBtn.classList.remove('active');
             } else {
@@ -6119,6 +6601,7 @@ function setupToolButtons(chart) {
             if (!isActive) {
                 rulerBtn.classList.add('active');
                 if (brushBtn) brushBtn.classList.remove('active');
+                if (freeDrawBtn) freeDrawBtn.classList.remove('active');
                 if (horizontalLineBtn) horizontalLineBtn.classList.remove('active');
                 if (rectangleBtn) rectangleBtn.classList.remove('active');
             } else {
@@ -6147,6 +6630,10 @@ function setupToolButtons(chart) {
                 if (brushBtn && chart.drawingMode) {
                     chart.setDrawingMode(false);
                     brushBtn.classList.remove('active');
+                }
+                if (freeDrawBtn && chart.freeDrawMode) {
+                    chart.setFreeDrawMode(false);
+                    freeDrawBtn.classList.remove('active');
                 }
                 if (horizontalLineBtn && chart.horizontalLineMode) {
                     chart.setHorizontalLineMode(false);
