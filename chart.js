@@ -523,8 +523,10 @@ class CandlestickChart {
                 return;
             }
             
-            // Колёсико: общий зум. При прокрутке назад — уменьшение графика и появление свободного пространства вокруг.
-            const zoomFactor = e.deltaY > 0 ? 0.9 : 1.1;
+            // Колёсико: плавный непрерывный зум без резких скачков.
+            // Для трекпада и мыши используем экспоненциальный коэффициент от deltaY.
+            const smoothFactor = Math.exp(-e.deltaY * 0.0012);
+            const zoomFactor = Math.max(0.985, Math.min(1.015, smoothFactor));
             const currentTimeRange = this.visibleEndTime - this.visibleStartTime;
             const currentPriceRange = this.visibleMaxPrice - this.visibleMinPrice;
             const newTimeRange = Math.max(this.timeRange * 0.005, currentTimeRange / zoomFactor);
@@ -536,8 +538,9 @@ class CandlestickChart {
             const currentEndRatio = currentTimeRange > 0
                 ? (this.endTime - this.visibleStartTime) / currentTimeRange
                 : (this.chartEndPositionRatio || (2 / 3));
-            const targetEndRatio = zoomIn ? 0.12 : 0.88;
-            const nextEndRatio = Math.max(0.05, Math.min(0.95, currentEndRatio + (targetEndRatio - currentEndRatio) * 0.35));
+            const targetEndRatio = zoomIn ? 0.18 : 0.82;
+            // Мягкий сдвиг, чтобы позиция менялась равномерно без "прыжка".
+            const nextEndRatio = Math.max(0.08, Math.min(0.92, currentEndRatio + (targetEndRatio - currentEndRatio) * 0.12));
 
             let newStartTime = this.endTime - newTimeRange * nextEndRatio;
             let newEndTime = newStartTime + newTimeRange;
@@ -3759,14 +3762,15 @@ class CandlestickChart {
 
         // Draw freehand strokes
         if (hasFreeDraw) {
-            this.ctx.strokeStyle = '#4a9eff';
-            this.ctx.lineWidth = 2;
             this.ctx.lineJoin = 'round';
             this.ctx.lineCap = 'round';
             this.ctx.setLineDash([]);
 
-            this.freeDrawStrokes.forEach(stroke => {
+            this.freeDrawStrokes.forEach((stroke, index) => {
                 if (!stroke || !Array.isArray(stroke.points) || stroke.points.length < 2) return;
+                const selected = this.selectedDrawing?.type === 'free' && this.selectedDrawing?.index === index;
+                this.ctx.strokeStyle = '#4a9eff';
+                this.ctx.lineWidth = selected ? 1.2 : 0.6;
                 this.ctx.beginPath();
                 let moved = false;
                 for (let i = 0; i < stroke.points.length; i++) {
@@ -3785,6 +3789,8 @@ class CandlestickChart {
             });
 
             if (this.freeDrawMode && Array.isArray(this.currentFreeDrawStroke) && this.currentFreeDrawStroke.length > 1) {
+                this.ctx.strokeStyle = '#4a9eff';
+                this.ctx.lineWidth = 0.6;
                 this.ctx.globalAlpha = 0.85;
                 this.ctx.beginPath();
                 this.currentFreeDrawStroke.forEach((point, i) => {
