@@ -36,12 +36,14 @@ class CandlestickChart {
         this.wsReconnectAttempts = 0;
         this.maxReconnectAttempts = 5;
         this.maxKlinesPerRequest = 1000; // Binance max limit per klines request
+        this.candleColors = {
+            up: '#26a69a',
+            down: '#ef5350'
+        };
         this.livePriceLineConfig = {
             enabled: true,
             dash: [8, 6],
-            lineWidth: 0.6,
-            upColor: '#26a69a',
-            downColor: '#ef5350'
+            lineWidth: 0.6
         };
         this.crosshair = {
             enabled: true,
@@ -85,6 +87,8 @@ class CandlestickChart {
         this.selectedDrawing = null; // { type: 'line'|'rect'|'ray'|'ruler', index: number } — выделенный элемент для удаления по Delete/Backspace
         this.draggedDrawing = null; // { type, index, startX, startY, origin }
         this.lineAlerts = []; // Runtime alerts attached to drawn lines/rays
+        /** Глобально включает/выключает проверку и срабатывание этих оповещений (ПКМ → «Добавить оповещение»). */
+        this.lineAlertsEnabled = true;
         this.lineAlertCheckTimer = null;
         this.lineAlertCheckIntervalMs = 1000;
         this.drawingAlertMenuEl = null;
@@ -265,6 +269,15 @@ class CandlestickChart {
             const levelsCfg = this.deepCloneData(defaults.levels);
             if (levelsCfg?.support && levelsCfg?.resistance) {
                 this.levelsConfig = levelsCfg;
+            }
+        }
+        if (defaults.candles && typeof defaults.candles === 'object') {
+            const candleCfg = this.deepCloneData(defaults.candles);
+            if (candleCfg && typeof candleCfg.up === 'string' && typeof candleCfg.down === 'string') {
+                this.candleColors = { up: candleCfg.up, down: candleCfg.down };
+            }
+            if (candleCfg && typeof candleCfg.lineAlertsEnabled === 'boolean') {
+                this.lineAlertsEnabled = candleCfg.lineAlertsEnabled;
             }
         }
     }
@@ -1084,6 +1097,7 @@ class CandlestickChart {
     }
 
     checkLineAlerts() {
+        if (!this.lineAlertsEnabled) return;
         if (!Array.isArray(this.lineAlerts) || this.lineAlerts.length === 0 || !Array.isArray(this.candles) || this.candles.length === 0) {
             return;
         }
@@ -3037,7 +3051,7 @@ class CandlestickChart {
             }
             
             const isGreen = candle.close >= candle.open;
-            const color = isGreen ? '#26a69a' : '#ef5350';
+            const color = isGreen ? this.candleColors.up : this.candleColors.down;
             
             // Clip candle X position to bounds
             const clippedX = Math.max(minX, Math.min(maxX - candleWidth, x));
@@ -3206,7 +3220,7 @@ class CandlestickChart {
         if (!Number.isFinite(y) || y < minY || y > maxY) return;
 
         const lastCandle = this.candles[this.candles.length - 1];
-        const lineColor = lastCandle.close >= lastCandle.open ? cfg.upColor : cfg.downColor;
+        const lineColor = lastCandle.close >= lastCandle.open ? this.candleColors.up : this.candleColors.down;
 
         this.ctx.save();
 
@@ -3988,6 +4002,7 @@ class CandlestickChart {
         const maxY = Math.floor(this.padding.top + chartAreaHeight);
 
         this.ctx.save();
+        if (!this.lineAlertsEnabled) this.ctx.globalAlpha = 0.4;
         this.ctx.beginPath();
         this.ctx.rect(minX, minY, maxX - minX, maxY - minY);
         this.ctx.clip();
@@ -5325,6 +5340,8 @@ function initChart() {
     
     // Setup levels modal (поддержка/сопротивление)
     setupLevelsModal(chartInstance);
+
+    setupCandleSettingsModal(chartInstance);
     
     // Ensure native color pickers close on outside click (notably on macOS)
     setupColorPickerOutsideClose();
@@ -5602,6 +5619,76 @@ function setupLevelsModal(chart) {
         if (e.target === modal) closeModal();
     });
     syncButtonActiveState();
+}
+
+function setupCandleSettingsModal(chart) {
+    const modal = document.getElementById('candleSettingsModal');
+    const btn = document.getElementById('candleSettingsBtn');
+    const closeBtn = document.getElementById('candleSettingsModalClose');
+    const saveBtn = document.getElementById('candleSettingsSave');
+    const saveDefaultBtn = document.getElementById('candleSettingsSaveDefault');
+    const resetBtn = document.getElementById('candleSettingsReset');
+    const colorUp = document.getElementById('candleColorUp');
+    const colorDown = document.getElementById('candleColorDown');
+    const lineAlertsEnabledCb = document.getElementById('candleSettingsLineAlertsEnabled');
+    if (!modal || !btn || !chart) return;
+
+    function getCandlesDefaultsPayload() {
+        return {
+            ...chart.candleColors,
+            lineAlertsEnabled: !!chart.lineAlertsEnabled
+        };
+    }
+
+    function syncFromChart() {
+        const cfg = chart.candleColors || {};
+        if (colorUp) colorUp.value = cfg.up || '#26a69a';
+        if (colorDown) colorDown.value = cfg.down || '#ef5350';
+        if (lineAlertsEnabledCb) lineAlertsEnabledCb.checked = chart.lineAlertsEnabled !== false;
+    }
+
+    function closeModal() {
+        modal.classList.remove('open');
+    }
+
+    function openModal() {
+        syncFromChart();
+        modal.classList.add('open');
+    }
+
+    function saveFromModal() {
+        chart.candleColors = {
+            up: colorUp?.value || '#26a69a',
+            down: colorDown?.value || '#ef5350'
+        };
+        chart.lineAlertsEnabled = !!lineAlertsEnabledCb?.checked;
+        chart.draw();
+        closeModal();
+    }
+
+    function resetModal() {
+        if (colorUp) colorUp.value = '#26a69a';
+        if (colorDown) colorDown.value = '#ef5350';
+        if (lineAlertsEnabledCb) lineAlertsEnabledCb.checked = true;
+        chart.candleColors = { up: '#26a69a', down: '#ef5350' };
+        chart.lineAlertsEnabled = true;
+        chart.draw();
+    }
+
+    btn.addEventListener('click', (e) => {
+        if (e.button !== 0) return;
+        openModal();
+    });
+    closeBtn?.addEventListener('click', closeModal);
+    saveBtn?.addEventListener('click', saveFromModal);
+    saveDefaultBtn?.addEventListener('click', () => {
+        saveFromModal();
+        chart.saveModuleDefault('candles', getCandlesDefaultsPayload());
+    });
+    resetBtn?.addEventListener('click', resetModal);
+    modal.addEventListener('click', (e) => {
+        if (e.target === modal) closeModal();
+    });
 }
 
 function setupValuesModal(chart) {
