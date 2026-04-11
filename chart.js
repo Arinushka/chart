@@ -279,6 +279,9 @@ class CandlestickChart {
             if (candleCfg && typeof candleCfg.lineAlertsEnabled === 'boolean') {
                 this.lineAlertsEnabled = candleCfg.lineAlertsEnabled;
             }
+            if (candleCfg && typeof candleCfg.timerEnabled === 'boolean') {
+                this.livePriceTimerEnabled = candleCfg.timerEnabled;
+            }
         }
     }
 
@@ -5630,20 +5633,47 @@ function setupCandleSettingsModal(chart) {
     const resetBtn = document.getElementById('candleSettingsReset');
     const colorUp = document.getElementById('candleColorUp');
     const colorDown = document.getElementById('candleColorDown');
+    const liveTimerCb = document.getElementById('candleSettingsLiveTimer');
     const lineAlertsEnabledCb = document.getElementById('candleSettingsLineAlertsEnabled');
+    const sectionTitleEl = document.getElementById('chartSettingsSectionTitle');
+    const chartSectionPanels = {
+        colors: document.getElementById('chartSettingsPanelColors'),
+        timer: document.getElementById('chartSettingsPanelTimer'),
+        alerts: document.getElementById('chartSettingsPanelAlerts')
+    };
+    const chartSectionTitles = {
+        colors: 'Цвет свечей',
+        timer: 'Таймер свечи',
+        alerts: 'Оповещения'
+    };
+    const navItems = modal?.querySelectorAll('.chart-settings-item') || [];
     if (!modal || !btn || !chart) return;
 
     function getCandlesDefaultsPayload() {
         return {
             ...chart.candleColors,
-            lineAlertsEnabled: !!chart.lineAlertsEnabled
+            lineAlertsEnabled: !!chart.lineAlertsEnabled,
+            timerEnabled: !!chart.livePriceTimerEnabled
         };
+    }
+
+    function showChartSection(section) {
+        const key = section && chartSectionPanels[section] ? section : 'colors';
+        Object.keys(chartSectionPanels).forEach((k) => {
+            const panel = chartSectionPanels[k];
+            if (panel) panel.style.display = k === key ? '' : 'none';
+        });
+        navItems.forEach((el) => {
+            el.classList.toggle('selected', el.getAttribute('data-chart-section') === key);
+        });
+        if (sectionTitleEl) sectionTitleEl.textContent = chartSectionTitles[key] || chartSectionTitles.colors;
     }
 
     function syncFromChart() {
         const cfg = chart.candleColors || {};
         if (colorUp) colorUp.value = cfg.up || '#26a69a';
         if (colorDown) colorDown.value = cfg.down || '#ef5350';
+        if (liveTimerCb) liveTimerCb.checked = chart.livePriceTimerEnabled !== false;
         if (lineAlertsEnabledCb) lineAlertsEnabledCb.checked = chart.lineAlertsEnabled !== false;
     }
 
@@ -5653,6 +5683,7 @@ function setupCandleSettingsModal(chart) {
 
     function openModal() {
         syncFromChart();
+        showChartSection('colors');
         modal.classList.add('open');
     }
 
@@ -5661,6 +5692,7 @@ function setupCandleSettingsModal(chart) {
             up: colorUp?.value || '#26a69a',
             down: colorDown?.value || '#ef5350'
         };
+        chart.livePriceTimerEnabled = !!liveTimerCb?.checked;
         chart.lineAlertsEnabled = !!lineAlertsEnabledCb?.checked;
         chart.draw();
         closeModal();
@@ -5669,11 +5701,20 @@ function setupCandleSettingsModal(chart) {
     function resetModal() {
         if (colorUp) colorUp.value = '#26a69a';
         if (colorDown) colorDown.value = '#ef5350';
+        if (liveTimerCb) liveTimerCb.checked = true;
         if (lineAlertsEnabledCb) lineAlertsEnabledCb.checked = true;
         chart.candleColors = { up: '#26a69a', down: '#ef5350' };
+        chart.livePriceTimerEnabled = true;
         chart.lineAlertsEnabled = true;
         chart.draw();
     }
+
+    navItems.forEach((el) => {
+        el.addEventListener('click', () => {
+            const section = el.getAttribute('data-chart-section');
+            if (section) showChartSection(section);
+        });
+    });
 
     btn.addEventListener('click', (e) => {
         if (e.button !== 0) return;

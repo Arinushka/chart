@@ -829,6 +829,28 @@ body {
     background: #f5c93d;
 }
 
+/* Модалка «Настройка графика»: подпись слева, контрол справа */
+.chart-settings-param-row {
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: nowrap;
+    gap: 12px;
+}
+
+.chart-settings-param-row label {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+}
+
+.chart-settings-param-row input[type="color"] {
+    flex-shrink: 0;
+}
+
+.chart-settings-param-row input[type="checkbox"] {
+    flex-shrink: 0;
+}
+
 @media (max-width: 1120px) {
     .top-bar {
         flex-wrap: wrap;

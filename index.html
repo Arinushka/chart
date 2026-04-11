@@ -42,7 +42,7 @@
                 </div>
             </div>
             <div class="chart-tools">
-                <button class="chart-tool-btn values-icon-btn" title="Плотности" id="valuesBtn">
+                <button class="chart-tool-btn values-icon-btn" title="Настройка плотностей" id="valuesBtn">
                     <svg class="values-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <path d="M4 20H20" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
                         <path d="M6 16H18" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path>
@@ -51,7 +51,7 @@
                         <circle cx="12" cy="4" r="1.5" fill="currentColor"></circle>
                     </svg>
                 </button>
-                <button class="chart-tool-btn levels-icon-btn" title="Уровни поддержки и сопротивления" id="levelsBtn">
+                <button class="chart-tool-btn levels-icon-btn" title="Настройка уровней" id="levelsBtn">
                     <svg class="levels-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
                         <path d="M21 3H3M21 21H3M5 12C5 11.0681 5 10.6022 5.15224 10.2346C5.35523 9.74458 5.74458 9.35523 6.23463 9.15224C6.60218 9 7.06812 9 8 9L16 9C16.9319 9 17.3978 9 17.7654 9.15224C18.2554 9.35523 18.6448 9.74458 18.8478 10.2346C19 10.6022 19 11.0681 19 12C19 12.9319 19 13.3978 18.8478 13.7654C18.6448 14.2554 18.2554 14.6448 17.7654 14.8478C17.3978 15 16.9319 15 16 15L8 15C7.06812 15 6.60218 15 6.23463 14.8478C5.74458 14.6448 5.35523 14.2554 5.15224 13.7654C5 13.3978 5 12.9319 5 12Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"></path>
                     </svg>
@@ -515,7 +515,7 @@
             <div class="indicators-modal-content">
                 <button class="indicators-modal-close" id="valuesModalClose">×</button>
                 <div class="indicators-modal-tabs">
-                    <button class="indicators-tab active" type="button">Значения</button>
+                    <button class="indicators-tab active" type="button">Настройка плотностей</button>
                 </div>
                 <div class="indicators-modal-body">
                     <div class="indicators-list">
@@ -559,7 +559,7 @@
             <div class="indicators-modal-content">
                 <button class="indicators-modal-close" id="levelsModalClose">×</button>
                 <div class="indicators-modal-tabs">
-                    <button class="indicators-tab active" type="button">Уровни</button>
+                    <button class="indicators-tab active" type="button">Настройка уровней</button>
                 </div>
                 <div class="indicators-modal-body">
                     <div class="indicators-list">
@@ -594,31 +594,41 @@
             </div>
         </div>
 
-        <!-- Candle colors modal -->
+        <!-- Chart settings modal -->
         <div class="indicators-modal" id="candleSettingsModal">
             <div class="indicators-modal-content">
                 <button class="indicators-modal-close" id="candleSettingsModalClose" type="button">×</button>
                 <div class="indicators-modal-tabs">
-                    <button class="indicators-tab active" type="button">Свечи</button>
+                    <button class="indicators-tab active" type="button">Настройка графика</button>
                 </div>
                 <div class="indicators-modal-body">
+                    <div class="indicators-list">
+                        <label class="indicator-item chart-settings-item selected" data-chart-section="colors">Цвет свечей</label>
+                        <label class="indicator-item chart-settings-item" data-chart-section="timer">Таймер свечи</label>
+                        <label class="indicator-item chart-settings-item" data-chart-section="alerts">Оповещения</label>
+                    </div>
                     <div class="indicators-config" id="candleSettingsConfig">
-                        <div class="indicators-config-title">Цвета свечей</div>
-                        <div class="indicator-config-panel">
-                            <div class="indicator-param-row">
+                        <div class="indicators-config-title" id="chartSettingsSectionTitle">Цвет свечей</div>
+                        <div class="indicator-config-panel chart-settings-panel" id="chartSettingsPanelColors">
+                            <div class="indicator-param-row chart-settings-param-row">
                                 <label for="candleColorUp">Рост (бычья)</label>
                                 <input type="color" id="candleColorUp" value="#26a69a">
                             </div>
-                            <div class="indicator-param-row">
+                            <div class="indicator-param-row chart-settings-param-row">
                                 <label for="candleColorDown">Падение (медвежья)</label>
                                 <input type="color" id="candleColorDown" value="#ef5350">
                             </div>
                         </div>
-                        <div class="indicators-config-title">Оповещения на рисунках</div>
-                        <div class="indicator-config-panel">
-                            <div class="indicator-param-row">
-                                <input type="checkbox" id="candleSettingsLineAlertsEnabled" checked>
+                        <div class="indicator-config-panel chart-settings-panel" id="chartSettingsPanelTimer" style="display:none;">
+                            <div class="indicator-param-row chart-settings-param-row">
+                                <label for="candleSettingsLiveTimer">Включить</label>
+                                <input type="checkbox" id="candleSettingsLiveTimer" checked>
+                            </div>
+                        </div>
+                        <div class="indicator-config-panel chart-settings-panel" id="chartSettingsPanelAlerts" style="display:none;">
+                            <div class="indicator-param-row chart-settings-param-row">
                                 <label for="candleSettingsLineAlertsEnabled">Включить/ Выключить оповещение</label>
+                                <input type="checkbox" id="candleSettingsLineAlertsEnabled" checked>
                             </div>
                         </div>
                     </div>
@@ -661,7 +671,7 @@
                     <svg class="tool-icon" viewBox="0 -960 960 960" fill="currentColor" aria-hidden="true"><path d="M160-240q-33 0-56.5-23.5T80-320v-320q0-33 23.5-56.5T160-720h640q33 0 56.5 23.5T880-640v320q0 33-23.5 56.5T800-240H160Zm0-80h640v-320H680v160h-80v-160h-80v160h-80v-160h-80v160h-80v-160H160v320Zm120-160h80-80Zm160 0h80-80Zm160 0h80-80Zm-120 0Z"/></svg>
                 </button>
                 <div class="sidebar-tools-bottom-group">
-                    <button class="tool-btn tool-icon-wrap" type="button" title="Настройки свечей" id="candleSettingsBtn" aria-label="Настройки свечей">
+                    <button class="tool-btn tool-icon-wrap" type="button" title="Настройка графика" id="candleSettingsBtn" aria-label="Настройка графика">
                         <svg class="tool-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                             <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z"></path>
                             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
