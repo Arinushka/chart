@@ -168,6 +168,9 @@ class CandlestickChart {
         this.mmVolumeToleranceRatio = 0.2; // допуск по объему (20%)
         this.drawingsStoragePrefix = 'chart.drawings.v1';
         this.defaultsStorageKey = 'chart.defaults.v1';
+        this.drawingUndoStack = [];
+        this.drawingRedoStack = [];
+        this.drawingUndoMaxDepth = 50;
         this.applySavedModuleDefaults();
         
         // Bind resize
@@ -377,6 +380,7 @@ class CandlestickChart {
     }
 
     loadDrawingsFromStorage(symbolOverride) {
+        this.clearDrawingUndoStacks();
         try {
             const key = this.getDrawingsStorageKey(symbolOverride);
             const raw = localStorage.getItem(key);
@@ -493,6 +497,67 @@ class CandlestickChart {
         }
     }
 
+    clearDrawingUndoStacks() {
+        this.drawingUndoStack = [];
+        this.drawingRedoStack = [];
+    }
+
+    cloneDrawingsState() {
+        return {
+            drawnLines: JSON.parse(JSON.stringify(this.drawnLines)),
+            freeDrawStrokes: JSON.parse(JSON.stringify(this.freeDrawStrokes)),
+            horizontalLines: JSON.parse(JSON.stringify(this.horizontalLines)),
+            rectangles: JSON.parse(JSON.stringify(this.rectangles)),
+            rulerSelections: JSON.parse(JSON.stringify(this.rulerSelections)),
+            lineAlerts: JSON.parse(JSON.stringify(this.lineAlerts))
+        };
+    }
+
+    applyDrawingsState(state) {
+        if (!state || typeof state !== 'object') return;
+        this.drawnLines = Array.isArray(state.drawnLines) ? state.drawnLines : [];
+        this.freeDrawStrokes = Array.isArray(state.freeDrawStrokes) ? state.freeDrawStrokes : [];
+        this.horizontalLines = Array.isArray(state.horizontalLines) ? state.horizontalLines : [];
+        this.rectangles = Array.isArray(state.rectangles) ? state.rectangles : [];
+        this.rulerSelections = Array.isArray(state.rulerSelections) ? state.rulerSelections : [];
+        this.lineAlerts = Array.isArray(state.lineAlerts) ? state.lineAlerts : [];
+    }
+
+    recordDrawingUndoPoint() {
+        const snap = this.cloneDrawingsState();
+        this.drawingUndoStack.push(snap);
+        if (this.drawingUndoStack.length > this.drawingUndoMaxDepth) {
+            this.drawingUndoStack.shift();
+        }
+        this.drawingRedoStack = [];
+    }
+
+    undoDrawingAction() {
+        if (this.drawingUndoStack.length === 0) return false;
+        const prev = this.drawingUndoStack.pop();
+        this.drawingRedoStack.push(this.cloneDrawingsState());
+        this.applyDrawingsState(prev);
+        this.selectedDrawing = null;
+        this.draggedDrawing = null;
+        this.refreshRulerSummaries();
+        this.saveDrawingsToStorage();
+        this.draw();
+        return true;
+    }
+
+    redoDrawingAction() {
+        if (this.drawingRedoStack.length === 0) return false;
+        const next = this.drawingRedoStack.pop();
+        this.drawingUndoStack.push(this.cloneDrawingsState());
+        this.applyDrawingsState(next);
+        this.selectedDrawing = null;
+        this.draggedDrawing = null;
+        this.refreshRulerSummaries();
+        this.saveDrawingsToStorage();
+        this.draw();
+        return true;
+    }
+
     refreshRulerSummaries() {
         if (!Array.isArray(this.rulerSelections) || this.rulerSelections.length === 0 || !Array.isArray(this.candles) || this.candles.length === 0) {
             return;
@@ -522,47 +587,68 @@ class CandlestickChart {
                 mouseY < this.padding.top || mouseY > this.padding.top + chartAreaHeight) {
                 return;
             }
-            
-            // Колёсико: плавный непрерывный зум без резких скачков.
-            // Для трекпада и мыши используем экспоненциальный коэффициент от deltaY.
+
+            const t0 = this.visibleStartTime;
+            const t1 = this.visibleEndTime;
+            const currentTimeRange = t1 - t0;
+            if (currentTimeRange <= 0) return;
+
+            const absY = Math.abs(e.deltaY);
+            const absX = Math.abs(e.deltaX);
+            const oneViewW = this.timeRange * 0.5;
+
+            const clampTimeWindow = (start, end) => {
+                const tr = end - start;
+                let ns = start;
+                let ne = end;
+                if (ns < this.startTime - oneViewW) {
+                    const sh = (this.startTime - oneViewW) - ns;
+                    ns += sh;
+                    ne += sh;
+                }
+                if (ne > this.endTime + oneViewW) {
+                    const sh = ne - (this.endTime + oneViewW);
+                    ns -= sh;
+                    ne -= sh;
+                }
+                return { start: ns, end: ne };
+            };
+
+            // Горизонтальный скролл трекпада (в основном deltaX): сдвиг по времени без сброса к «якорю» у последней свечи.
+            const horizontalDominant = absX >= absY && absY < 2;
+            if (horizontalDominant && absX > 0.5) {
+                const panFactor = 0.45;
+                const timeDelta = (this.chartWidth > 0) ? (e.deltaX / this.chartWidth) * currentTimeRange * panFactor : 0;
+                const { start, end } = clampTimeWindow(t0 + timeDelta, t1 + timeDelta);
+                this.visibleStartTime = start;
+                this.visibleEndTime = end;
+                this.applyAutoPriceScaleFromVisibleCandles();
+                this.axisZoomUsed = true;
+                this.showResetZoomButton();
+                this.draw();
+                return;
+            }
+
+            if (absY < 0.5) return;
+
+            // Вертикальный зум: масштаб от точки под курсором (время под курсором не смещается), без привязки к endTime.
             const smoothFactor = Math.exp(-e.deltaY * 0.0012);
             const zoomFactor = Math.max(0.985, Math.min(1.015, smoothFactor));
-            const currentTimeRange = this.visibleEndTime - this.visibleStartTime;
-            const currentPriceRange = this.visibleMaxPrice - this.visibleMinPrice;
             const newTimeRange = Math.max(this.timeRange * 0.005, currentTimeRange / zoomFactor);
-            const newPriceRange = Math.max(this.priceRange * 0.005, currentPriceRange / zoomFactor);
-            const zoomIn = e.deltaY < 0;
-
-            // Временная ось: зум не от курсора.
-            // При увеличении последняя свеча стремится влево, при уменьшении — вправо.
-            const currentEndRatio = currentTimeRange > 0
-                ? (this.endTime - this.visibleStartTime) / currentTimeRange
-                : (this.chartEndPositionRatio || (2 / 3));
-            const targetEndRatio = zoomIn ? 0.18 : 0.82;
-            // Мягкий сдвиг, чтобы позиция менялась равномерно без "прыжка".
-            const nextEndRatio = Math.max(0.08, Math.min(0.92, currentEndRatio + (targetEndRatio - currentEndRatio) * 0.12));
-
-            let newStartTime = this.endTime - newTimeRange * nextEndRatio;
+            const anchorTime = this.xToTime(mouseX);
+            let f = currentTimeRange > 0 ? (anchorTime - t0) / currentTimeRange : 0.5;
+            if (!Number.isFinite(f)) f = 0.5;
+            f = Math.max(0, Math.min(1, f));
+            let newStartTime = anchorTime - f * newTimeRange;
             let newEndTime = newStartTime + newTimeRange;
-            const oneViewW = this.timeRange * 0.5;
-            if (newStartTime < this.startTime - oneViewW) {
-                newStartTime = this.startTime - oneViewW;
-                newEndTime = newStartTime + newTimeRange;
-            }
-            if (newEndTime > this.endTime + oneViewW) {
-                newEndTime = this.endTime + oneViewW;
-                newStartTime = newEndTime - newTimeRange;
-            }
+            const clamped = clampTimeWindow(newStartTime, newEndTime);
+            newStartTime = clamped.start;
+            newEndTime = clamped.end;
 
-            // Ценовая ось: зум от центра видимого диапазона, а не от позиции курсора.
-            const centerPrice = (this.visibleMinPrice + this.visibleMaxPrice) / 2;
-            let newMinPrice = centerPrice - newPriceRange / 2;
-            let newMaxPrice = centerPrice + newPriceRange / 2;
             this.zoomLevel *= zoomFactor;
             this.visibleStartTime = newStartTime;
             this.visibleEndTime = newEndTime;
-            this.visibleMinPrice = newMinPrice;
-            this.visibleMaxPrice = newMaxPrice;
+            this.applyAutoPriceScaleFromVisibleCandles();
             this.axisZoomUsed = true;
             this.showResetZoomButton();
             this.draw();
@@ -886,6 +972,7 @@ class CandlestickChart {
             item.condition === condition
         );
         if (!hasDuplicate) {
+            this.recordDrawingUndoPoint();
             this.lineAlerts.push({
                 id: `line_alert_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
                 targetType: hit.type,
@@ -1074,6 +1161,52 @@ class CandlestickChart {
         if (needsPersist) this.saveDrawingsToStorage();
         if (needsRedraw) this.draw();
     }
+
+    /**
+     * Вертикальный масштаб по high/low свечей в текущем окне времени.
+     * Отступ сверху и снизу задаётся в пикселях (~1 см), чтобы серия «прилипала» к краям области графика с равными полями.
+     */
+    applyAutoPriceScaleFromVisibleCandles() {
+        if (!Array.isArray(this.candles) || this.candles.length === 0) {
+            this.visibleMinPrice = this.minPrice;
+            this.visibleMaxPrice = this.maxPrice;
+            return;
+        }
+        const tView0 = Math.min(this.visibleStartTime, this.visibleEndTime);
+        const tView1 = Math.max(this.visibleStartTime, this.visibleEndTime);
+        const tLo = Math.max(tView0, this.startTime);
+        const tHi = Math.min(tView1, this.endTime);
+        const inView = this.candles.filter(c => c && c.time >= tLo && c.time <= tHi);
+        const chartAreaHeight = Math.max(1, this.chartHeight - this.volumeHeight);
+        const marginPx = Math.min(chartAreaHeight * 0.14, Math.max(24, (96 / 2.54) * 0.85));
+
+        if (inView.length === 0) {
+            this.visibleMinPrice = this.minPrice;
+            this.visibleMaxPrice = this.maxPrice;
+            return;
+        }
+        let vHigh = -Infinity;
+        let vLow = Infinity;
+        for (let i = 0; i < inView.length; i++) {
+            const c = inView[i];
+            if (Number.isFinite(c.high) && c.high > vHigh) vHigh = c.high;
+            if (Number.isFinite(c.low) && c.low < vLow) vLow = c.low;
+        }
+        if (!Number.isFinite(vHigh) || !Number.isFinite(vLow)) {
+            this.visibleMinPrice = this.minPrice;
+            this.visibleMaxPrice = this.maxPrice;
+            return;
+        }
+        const vRange = vHigh - vLow;
+        const eps = Math.max(Math.abs(vHigh) * 1e-9, (this.priceRange || 1) * 1e-6, 1e-12);
+        const range = vRange < eps ? eps : vRange;
+        const pricePerPx = range / chartAreaHeight;
+        const pad = pricePerPx * marginPx;
+        const padFloor = range * 0.04;
+        const p = Math.max(pad, padFloor);
+        this.visibleMinPrice = vLow - p;
+        this.visibleMaxPrice = vHigh + p;
+    }
     
     resetZoomToDefault() {
         // Восстанавливаем вид как при первоначальной отрисовке (как в initializeFromData)
@@ -1083,18 +1216,7 @@ class CandlestickChart {
         this.visibleStartTime = this.endTime - dataTimeRange;
         const ratio = this.chartEndPositionRatio;
         this.visibleEndTime = this.endTime + dataTimeRange * (1 / ratio - 1);
-        const visibleCandles = this.candles.filter(c => c.time >= this.visibleStartTime && c.time <= this.endTime);
-        if (visibleCandles.length > 0) {
-            const vHigh = Math.max(...visibleCandles.map(c => c.high));
-            const vLow = Math.min(...visibleCandles.map(c => c.low));
-            const vRange = vHigh - vLow || this.priceRange * 0.1;
-            const pad = vRange * 0.1;
-            this.visibleMinPrice = vLow - pad;
-            this.visibleMaxPrice = vHigh + pad;
-        } else {
-            this.visibleMinPrice = this.minPrice;
-            this.visibleMaxPrice = this.maxPrice;
-        }
+        this.applyAutoPriceScaleFromVisibleCandles();
         this.zoomLevel = 1.0;
         this.axisZoomUsed = false;
         this.hideResetZoomButton();
@@ -1115,27 +1237,24 @@ class CandlestickChart {
                 return;
             }
             
-            // Масштабирование сдвигом: по времени — точка под курсором; по цене — центр видимого диапазона.
+            // Масштабирование сдвигом по осям: горизонт — окно времени; вертикаль цены всегда подгоняется под свечи с полями.
             if (this.isZoomDragging && this.zoomDragStartVisible) {
                 const deltaX = x - this.zoomDragStartX;
                 const deltaY = y - this.zoomDragStartY;
-                const chartAreaHeight = this.chartHeight - this.volumeHeight;
                 const zoomAxis = this.zoomDragAxis || 'both';
                 const normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
-                const pivotPrice = (this.zoomDragStartVisible.minPrice + this.zoomDragStartVisible.maxPrice) / 2;
                 const timeMultRaw = (zoomAxis === 'time') ? (1 + deltaX / 400) : (1 - deltaX / 400);
                 const timeMult = Math.max(0.05, Math.min(3, timeMultRaw));
                 const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
                 const minTimeRange = Math.max(this.timeRange * 0.005, 1);
-                const minPriceRange = Math.max(this.priceRange * 0.005, 1e-9);
                 let newTimeRange = this.zoomDragStartTimeRange;
-                let newPriceRange = this.zoomDragStartPriceRange;
-                if (zoomAxis === 'time' || zoomAxis === 'both') {
+                if (zoomAxis === 'time') {
                     newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * timeMult);
-                }
-                if (zoomAxis === 'price' || zoomAxis === 'both') {
-                    newPriceRange = Math.max(minPriceRange, this.zoomDragStartPriceRange * priceMult);
+                } else if (zoomAxis === 'both') {
+                    newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * timeMult * priceMult);
+                } else if (zoomAxis === 'price') {
+                    newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * priceMult);
                 }
 
                 let newStartTime = this.zoomDragStartVisible.startTime;
@@ -1157,41 +1276,23 @@ class CandlestickChart {
                     if (newEndTime > this.endTime + oneViewW) { newEndTime = this.endTime + oneViewW; newStartTime = newEndTime - newTimeRange; }
                 }
 
-                let newMinPrice = this.zoomDragStartVisible.minPrice;
-                let newMaxPrice = this.zoomDragStartVisible.maxPrice;
-                if (zoomAxis === 'price' || zoomAxis === 'both') {
-                    newMinPrice = pivotPrice - newPriceRange / 2;
-                    newMaxPrice = pivotPrice + newPriceRange / 2;
-                }
                 this.visibleStartTime = newStartTime;
                 this.visibleEndTime = newEndTime;
-                this.visibleMinPrice = newMinPrice;
-                this.visibleMaxPrice = newMaxPrice;
+                this.applyAutoPriceScaleFromVisibleCandles();
                 this.axisZoomUsed = true;
                 this.showResetZoomButton();
                 this.draw();
                 return;
             }
-            // Handle panning (when no drawing tools are active). Shift — только по времени, Alt — только по цене, иначе — по обеим осям.
+            // Панорамирование: движение по времени; вертикаль — авто по high/low видимых свечей с полями сверху/снизу.
             if (this.isPanning && !this.drawingMode && !this.horizontalLineMode && 
                 !this.rectangleMode && !this.rulerMode && !this.freeDrawMode) {
                 const deltaX = x - this.panStartX;
-                const deltaY = y - this.panStartY;
                 const timeRange = this.panStartVisibleEndTime - this.panStartVisibleStartTime;
-                const priceRange = this.panStartVisibleMaxPrice - this.panStartVisibleMinPrice;
                 const timeDelta = (this.chartWidth > 0) ? -(deltaX / this.chartWidth) * timeRange : 0;
-                const priceDelta = (deltaY / (this.chartHeight - this.volumeHeight)) * priceRange;
-                
-                const panTime = !e.altKey;
-                const panPrice = !e.shiftKey;
-                
-                let newStartTime = panTime ? this.panStartVisibleStartTime + timeDelta : this.panStartVisibleStartTime;
-                let newEndTime = panTime ? this.panStartVisibleEndTime + timeDelta : this.panStartVisibleEndTime;
-                let newMinPrice = panPrice ? this.panStartVisibleMinPrice + priceDelta : this.panStartVisibleMinPrice;
-                let newMaxPrice = panPrice ? this.panStartVisibleMaxPrice + priceDelta : this.panStartVisibleMaxPrice;
-                
+                let newStartTime = this.panStartVisibleStartTime + timeDelta;
+                let newEndTime = this.panStartVisibleEndTime + timeDelta;
                 const maxTimeOver = timeRange;
-                const maxPriceOver = priceRange;
                 if (newStartTime < this.startTime - maxTimeOver) {
                     newStartTime = this.startTime - maxTimeOver;
                     newEndTime = newStartTime + timeRange;
@@ -1200,20 +1301,9 @@ class CandlestickChart {
                     newEndTime = this.endTime + maxTimeOver;
                     newStartTime = newEndTime - timeRange;
                 }
-                if (newMinPrice < this.minPrice - maxPriceOver) {
-                    newMinPrice = this.minPrice - maxPriceOver;
-                    newMaxPrice = newMinPrice + priceRange;
-                }
-                if (newMaxPrice > this.maxPrice + maxPriceOver) {
-                    newMaxPrice = this.maxPrice + maxPriceOver;
-                    newMinPrice = newMaxPrice - priceRange;
-                }
-                
                 this.visibleStartTime = newStartTime;
                 this.visibleEndTime = newEndTime;
-                this.visibleMinPrice = newMinPrice;
-                this.visibleMaxPrice = newMaxPrice;
-                
+                this.applyAutoPriceScaleFromVisibleCandles();
                 this.draw();
                 return;
             }
@@ -1306,6 +1396,7 @@ class CandlestickChart {
                     const minPrice = Math.min(p1, p2);
                     const maxPrice = Math.max(p1, p2);
                     const summary = this.calculateRulerSummaryFromBounds(startTime, endTime, minPrice, maxPrice);
+                    this.recordDrawingUndoPoint();
                     this.rulerSelections.push({
                         time1: t1, price1: p1, time2: t2, price2: p2,
                         summary: summary
@@ -1321,6 +1412,7 @@ class CandlestickChart {
             
             // Handle horizontal line mode (сохраняем в координатах графика: время, цена)
             if (this.horizontalLineMode) {
+                this.recordDrawingUndoPoint();
                 this.horizontalLines.push({
                     id: this.generateDrawingId('ray'),
                     time1: this.xToTime(x),
@@ -1335,6 +1427,7 @@ class CandlestickChart {
             
             // Handle alert mode: один клик — горизонтальная прерывистая линия
             if (this.alertMode) {
+                this.recordDrawingUndoPoint();
                 this.horizontalLines.push({
                     id: this.generateDrawingId('ray'),
                     time1: this.xToTime(x),
@@ -1359,6 +1452,7 @@ class CandlestickChart {
                     // Second point - complete the rectangle (right bottom corner)
                     this.currentRectangle.x2 = x;
                     this.currentRectangle.y2 = y;
+                    this.recordDrawingUndoPoint();
                     this.rectangles.push({
                         id: this.generateDrawingId('rect'),
                         time1: this.xToTime(this.currentRectangle.x1),
@@ -1385,6 +1479,7 @@ class CandlestickChart {
                 } else {
                     this.currentLine.x2 = x;
                     this.currentLine.y2 = y;
+                    this.recordDrawingUndoPoint();
                     this.drawnLines.push({
                         id: this.generateDrawingId('line'),
                         time1: this.xToTime(this.currentLine.x1),
@@ -1411,10 +1506,25 @@ class CandlestickChart {
         
         // Delete/Backspace — удалить выделенный элемент (на document, чтобы работало при любом фокусе)
         const onKeyDown = (e) => {
-            if ((e.key !== 'Delete' && e.key !== 'Backspace') || !this.selectedDrawing) return;
             const el = document.activeElement;
-            if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable)) return;
+            const inInput = el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable);
+            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyZ') {
+                if (inInput) return;
+                e.preventDefault();
+                if (e.shiftKey) this.redoDrawingAction();
+                else this.undoDrawingAction();
+                return;
+            }
+            if ((e.ctrlKey || e.metaKey) && e.code === 'KeyY') {
+                if (inInput) return;
+                e.preventDefault();
+                this.redoDrawingAction();
+                return;
+            }
+            if ((e.key !== 'Delete' && e.key !== 'Backspace') || !this.selectedDrawing) return;
+            if (inInput) return;
             e.preventDefault();
+            this.recordDrawingUndoPoint();
             const s = this.selectedDrawing;
             if (s.type === 'line') this.drawnLines.splice(s.index, 1);
             else if (s.type === 'free') this.freeDrawStrokes.splice(s.index, 1);
@@ -1512,6 +1622,7 @@ class CandlestickChart {
                 if (this.freeDrawMode && this.isFreeDrawing && Array.isArray(this.currentFreeDrawStroke)) {
                     this.isFreeDrawing = false;
                     if (this.currentFreeDrawStroke.length >= 2) {
+                        this.recordDrawingUndoPoint();
                         this.freeDrawStrokes.push({
                             id: this.generateDrawingId('free'),
                             points: this.currentFreeDrawStroke.map(point => ({
@@ -1561,6 +1672,7 @@ class CandlestickChart {
             if (this.freeDrawMode && this.isFreeDrawing && Array.isArray(this.currentFreeDrawStroke)) {
                 this.isFreeDrawing = false;
                 if (this.currentFreeDrawStroke.length >= 2) {
+                    this.recordDrawingUndoPoint();
                     this.freeDrawStrokes.push({
                         id: this.generateDrawingId('free'),
                         points: this.currentFreeDrawStroke.map(point => ({
@@ -1611,6 +1723,7 @@ class CandlestickChart {
             const hit = this.hitTestDrawnElements(x, y);
             if (hit) {
                 if (hit.type === 'free') {
+                    this.recordDrawingUndoPoint();
                     this.freeDrawStrokes.splice(hit.index, 1);
                     this.selectedDrawing = null;
                     this.saveDrawingsToStorage();
@@ -1626,7 +1739,10 @@ class CandlestickChart {
                     this.draw();
                     return;
                 }
-                if (hit.type === 'ruler') this.rulerSelections.splice(hit.index, 1);
+                if (hit.type === 'ruler') {
+                    this.recordDrawingUndoPoint();
+                    this.rulerSelections.splice(hit.index, 1);
+                }
                 this.selectedDrawing = null;
                 this.saveDrawingsToStorage();
                 this.draw();
@@ -1730,7 +1846,10 @@ class CandlestickChart {
             origin.time1 = sel.time1; origin.time2 = sel.time2;
             origin.price1 = sel.price1; origin.price2 = sel.price2;
             origin.x1 = sel.x1; origin.y1 = sel.y1; origin.x2 = sel.x2; origin.y2 = sel.y2;
+        } else {
+            return;
         }
+        this.recordDrawingUndoPoint();
         this.draggedDrawing = { ...hit, startX, startY, origin };
     }
 
@@ -2089,6 +2208,14 @@ class CandlestickChart {
     }
     
     clearDrawnLines() {
+        const hasAny =
+            this.drawnLines.length > 0 ||
+            this.freeDrawStrokes.length > 0 ||
+            this.horizontalLines.length > 0 ||
+            this.rectangles.length > 0 ||
+            this.rulerSelections.length > 0 ||
+            this.lineAlerts.length > 0;
+        if (hasAny) this.recordDrawingUndoPoint();
         this.drawnLines = [];
         this.freeDrawStrokes = [];
         this.horizontalLines = [];
@@ -2141,6 +2268,7 @@ class CandlestickChart {
         
         // Only draw if we have valid dimensions and data
         if (this.chartWidth > 0 && this.chartHeight > 0 && this.candles.length > 0) {
+            this.applyAutoPriceScaleFromVisibleCandles();
             this.draw();
         }
     }
@@ -2624,19 +2752,7 @@ class CandlestickChart {
         this.visibleStartTime = this.endTime - dataTimeRange;
         const ratio = this.chartEndPositionRatio;
         this.visibleEndTime = this.endTime + dataTimeRange * (1 / ratio - 1);
-        // Растягиваем по вертикали: видимый диапазон цен — по свечам в видимом интервале времени (с отступом)
-        const visibleCandles = this.candles.filter(c => c.time >= this.visibleStartTime && c.time <= this.endTime);
-        if (visibleCandles.length > 0) {
-            const vHigh = Math.max(...visibleCandles.map(c => c.high));
-            const vLow = Math.min(...visibleCandles.map(c => c.low));
-            const vRange = vHigh - vLow || this.priceRange * 0.1;
-            const pad = vRange * 0.1;
-            this.visibleMinPrice = vLow - pad;
-            this.visibleMaxPrice = vHigh + pad;
-        } else {
-            this.visibleMinPrice = this.minPrice;
-            this.visibleMaxPrice = this.maxPrice;
-        }
+        this.applyAutoPriceScaleFromVisibleCandles();
         
         this.refreshRulerSummaries();
         if (this.valuesConfig?.density?.enabled) this.startDensityUpdates();
@@ -3770,7 +3886,7 @@ class CandlestickChart {
                 if (!stroke || !Array.isArray(stroke.points) || stroke.points.length < 2) return;
                 const selected = this.selectedDrawing?.type === 'free' && this.selectedDrawing?.index === index;
                 this.ctx.strokeStyle = '#4a9eff';
-                this.ctx.lineWidth = selected ? 1.2 : 0.6;
+                this.ctx.lineWidth = selected ? 2.2 : 1.4;
                 this.ctx.beginPath();
                 let moved = false;
                 for (let i = 0; i < stroke.points.length; i++) {
@@ -3790,7 +3906,7 @@ class CandlestickChart {
 
             if (this.freeDrawMode && Array.isArray(this.currentFreeDrawStroke) && this.currentFreeDrawStroke.length > 1) {
                 this.ctx.strokeStyle = '#4a9eff';
-                this.ctx.lineWidth = 0.6;
+                this.ctx.lineWidth = 1.4;
                 this.ctx.globalAlpha = 0.85;
                 this.ctx.beginPath();
                 this.currentFreeDrawStroke.forEach((point, i) => {
