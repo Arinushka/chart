@@ -1186,11 +1186,12 @@ class CandlestickChart {
      * Вертикальный масштаб по high/low свечей в текущем окне времени.
      * Отступ сверху и снизу задаётся в пикселях (~1 см), чтобы серия «прилипала» к краям области графика с равными полями.
      */
-    /** Масштаб по вертикали при перетаскивании с оси цены/времени в режиме свободного вида (от снимка в zoomDragStartVisible). */
+    /** Растяжение по цене: видимый диапазон от снимка zoomDragStartVisible, центр без смещения (свечи выше/ниже в пикселях). */
     applyFreeChartPriceFromAxisZoomDrag(deltaY) {
         const v = this.zoomDragStartVisible;
         if (!v || !Number.isFinite(v.minPrice) || !Number.isFinite(v.maxPrice)) return;
-        const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
+        // Чуть чувствительнее, чтобы растяжение по высоте было заметнее
+        const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 280));
         const pr0 = v.maxPrice - v.minPrice;
         const mid = (v.maxPrice + v.minPrice) / 2;
         const eps = Math.max(Math.abs(mid) * 1e-9, (pr0 || 1) * 1e-12, 1e-15);
@@ -1279,24 +1280,34 @@ class CandlestickChart {
                     this.freeChartViewActive = true;
                 }
                 const zoomAxis = this.zoomDragAxis || 'both';
+
+                // Только правая ось цены: «растяжение» по вертикали — меняется только диапазон цены (свечи выше/ниже), окно времени не трогаем.
+                if (zoomAxis === 'price') {
+                    this.visibleStartTime = this.zoomDragStartVisible.startTime;
+                    this.visibleEndTime = this.zoomDragStartVisible.endTime;
+                    this.applyFreeChartPriceFromAxisZoomDrag(deltaY);
+                    this.axisZoomUsed = true;
+                    this.showResetZoomButton();
+                    this.draw();
+                    return;
+                }
+
                 // Клик по правой оси цены даёт X у правого края — старый normX≈1 тянул масштаб вправо. Для масштаба по цене якорим время по центру графика.
                 let normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
-                if (zoomAxis === 'price' || zoomAxis === 'both') {
+                if (zoomAxis === 'both') {
                     normX = 0.5;
                 }
                 normX = Math.max(0, Math.min(1, normX));
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
                 const timeMultRaw = (zoomAxis === 'time') ? (1 + deltaX / 400) : (1 - deltaX / 400);
                 const timeMult = Math.max(0.05, Math.min(3, timeMultRaw));
-                const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
                 const minTimeRange = Math.max(this.timeRange * 0.005, 1);
                 let newTimeRange = this.zoomDragStartTimeRange;
                 if (zoomAxis === 'time') {
                     newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * timeMult);
                 } else if (zoomAxis === 'both') {
-                    newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * timeMult * priceMult);
-                } else if (zoomAxis === 'price') {
-                    newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * priceMult);
+                    // Вертикальное движение из угла — растяжение по цене (ниже), не ужимаем окно времени по Y.
+                    newTimeRange = Math.max(minTimeRange, this.zoomDragStartTimeRange * timeMult);
                 }
 
                 let newStartTime = this.zoomDragStartVisible.startTime;
