@@ -1348,8 +1348,9 @@ class CandlestickChart {
                     const chartAreaHeight = this.chartHeight - this.volumeHeight;
                     const pr = this.panStartVisibleMaxPrice - this.panStartVisibleMinPrice;
                     const dPrice = chartAreaHeight > 0 ? (deltaY / chartAreaHeight) * pr : 0;
-                    this.visibleMinPrice = this.panStartVisibleMinPrice - dPrice;
-                    this.visibleMaxPrice = this.panStartVisibleMaxPrice - dPrice;
+                    // Вверх курсора — сдвиг вида вверх по цене; вниз — вниз (совпадает с направлением движения).
+                    this.visibleMinPrice = this.panStartVisibleMinPrice + dPrice;
+                    this.visibleMaxPrice = this.panStartVisibleMaxPrice + dPrice;
                 } else {
                     this.applyAutoPriceScaleFromVisibleCandles();
                 }
