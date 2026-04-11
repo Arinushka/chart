@@ -135,6 +135,8 @@ class CandlestickChart {
         this.visibleMinPrice = 0;
         this.visibleMaxPrice = 0;
         this.axisZoomUsed = false; // true, если пользователь масштабировал по осям (для показа кнопки «Сбросить масштаб»)
+        /** После масштабирования с нижней/правой оси (любое движение) — вид не подстраивается под high/low свечей, панорамирование 2D. Сброс кнопкой «Сбросить масштаб». */
+        this.freeChartViewActive = false;
         
         // Indicators (MA, EMA, etc.) - main chart overlay
         this.activeIndicators = {
@@ -638,7 +640,7 @@ class CandlestickChart {
                 const { start, end } = clampTimeWindow(t0 + timeDelta, t1 + timeDelta);
                 this.visibleStartTime = start;
                 this.visibleEndTime = end;
-                this.applyAutoPriceScaleFromVisibleCandles();
+                if (!this.freeChartViewActive) this.applyAutoPriceScaleFromVisibleCandles();
                 this.axisZoomUsed = true;
                 this.showResetZoomButton();
                 this.draw();
@@ -664,7 +666,7 @@ class CandlestickChart {
             this.zoomLevel *= zoomFactor;
             this.visibleStartTime = newStartTime;
             this.visibleEndTime = newEndTime;
-            this.applyAutoPriceScaleFromVisibleCandles();
+            if (!this.freeChartViewActive) this.applyAutoPriceScaleFromVisibleCandles();
             this.axisZoomUsed = true;
             this.showResetZoomButton();
             this.draw();
@@ -1183,6 +1185,19 @@ class CandlestickChart {
      * Вертикальный масштаб по high/low свечей в текущем окне времени.
      * Отступ сверху и снизу задаётся в пикселях (~1 см), чтобы серия «прилипала» к краям области графика с равными полями.
      */
+    /** Масштаб по вертикали при перетаскивании с оси цены/времени в режиме свободного вида (от снимка в zoomDragStartVisible). */
+    applyFreeChartPriceFromAxisZoomDrag(deltaY) {
+        const v = this.zoomDragStartVisible;
+        if (!v || !Number.isFinite(v.minPrice) || !Number.isFinite(v.maxPrice)) return;
+        const priceMult = Math.max(0.05, Math.min(3, 1 + deltaY / 400));
+        const pr0 = v.maxPrice - v.minPrice;
+        const mid = (v.maxPrice + v.minPrice) / 2;
+        const eps = Math.max(Math.abs(mid) * 1e-9, (pr0 || 1) * 1e-12, 1e-15);
+        const newPr = Math.max(eps, pr0 * priceMult);
+        this.visibleMinPrice = mid - newPr / 2;
+        this.visibleMaxPrice = mid + newPr / 2;
+    }
+
     applyAutoPriceScaleFromVisibleCandles() {
         if (!Array.isArray(this.candles) || this.candles.length === 0) {
             this.visibleMinPrice = this.minPrice;
@@ -1226,6 +1241,7 @@ class CandlestickChart {
     }
     
     resetZoomToDefault() {
+        this.freeChartViewActive = false;
         // Восстанавливаем вид как при первоначальной отрисовке (как в initializeFromData)
         const intervalMs = this.getIntervalMs(this.interval);
         const targetCandles = this.getDefaultVisibleCandles(this.interval);
@@ -1254,10 +1270,13 @@ class CandlestickChart {
                 return;
             }
             
-            // Масштабирование сдвигом по осям: горизонт — окно времени; вертикаль цены всегда подгоняется под свечи с полями.
+            // Масштабирование сдвигом по осям: горизонт — окно времени; после любого движения включается свободный вид (цена не по свечам, см. freeChartViewActive).
             if (this.isZoomDragging && this.zoomDragStartVisible) {
                 const deltaX = x - this.zoomDragStartX;
                 const deltaY = y - this.zoomDragStartY;
+                if (Math.abs(deltaX) > 0.5 || Math.abs(deltaY) > 0.5) {
+                    this.freeChartViewActive = true;
+                }
                 const zoomAxis = this.zoomDragAxis || 'both';
                 const normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
@@ -1295,16 +1314,21 @@ class CandlestickChart {
 
                 this.visibleStartTime = newStartTime;
                 this.visibleEndTime = newEndTime;
-                this.applyAutoPriceScaleFromVisibleCandles();
+                if (this.freeChartViewActive) {
+                    this.applyFreeChartPriceFromAxisZoomDrag(deltaY);
+                } else {
+                    this.applyAutoPriceScaleFromVisibleCandles();
+                }
                 this.axisZoomUsed = true;
                 this.showResetZoomButton();
                 this.draw();
                 return;
             }
-            // Панорамирование: движение по времени; вертикаль — авто по high/low видимых свечей с полями сверху/снизу.
+            // Панорамирование: движение по времени; в обычном режиме вертикаль — авто по high/low видимых свечей; в свободном виде — сдвиг и времени, и цены.
             if (this.isPanning && !this.drawingMode && !this.horizontalLineMode && 
                 !this.rectangleMode && !this.rulerMode && !this.freeDrawMode) {
                 const deltaX = x - this.panStartX;
+                const deltaY = y - this.panStartY;
                 const timeRange = this.panStartVisibleEndTime - this.panStartVisibleStartTime;
                 const timeDelta = (this.chartWidth > 0) ? -(deltaX / this.chartWidth) * timeRange : 0;
                 let newStartTime = this.panStartVisibleStartTime + timeDelta;
@@ -1320,7 +1344,15 @@ class CandlestickChart {
                 }
                 this.visibleStartTime = newStartTime;
                 this.visibleEndTime = newEndTime;
-                this.applyAutoPriceScaleFromVisibleCandles();
+                if (this.freeChartViewActive) {
+                    const chartAreaHeight = this.chartHeight - this.volumeHeight;
+                    const pr = this.panStartVisibleMaxPrice - this.panStartVisibleMinPrice;
+                    const dPrice = chartAreaHeight > 0 ? (deltaY / chartAreaHeight) * pr : 0;
+                    this.visibleMinPrice = this.panStartVisibleMinPrice - dPrice;
+                    this.visibleMaxPrice = this.panStartVisibleMaxPrice - dPrice;
+                } else {
+                    this.applyAutoPriceScaleFromVisibleCandles();
+                }
                 this.draw();
                 return;
             }
@@ -2285,7 +2317,7 @@ class CandlestickChart {
         
         // Only draw if we have valid dimensions and data
         if (this.chartWidth > 0 && this.chartHeight > 0 && this.candles.length > 0) {
-            this.applyAutoPriceScaleFromVisibleCandles();
+            if (!this.freeChartViewActive) this.applyAutoPriceScaleFromVisibleCandles();
             this.draw();
         }
     }
@@ -2741,7 +2773,9 @@ class CandlestickChart {
             console.error('No candles data to initialize!');
             return;
         }
-        
+
+        this.freeChartViewActive = false;
+
         // Calculate price range from actual data
         const allPrices = this.candles.flatMap(c => [c.high, c.low]);
         this.minPrice = Math.min(...allPrices);
@@ -2897,6 +2931,15 @@ class CandlestickChart {
         if (!Number.isFinite(value)) return value;
         return Math.round(value) + 0.5;
     }
+
+    /** Число горизонтальных делений цены по видимой области (сетка + подписи справа): плотнее, чем фикс. 5 шагов. */
+    getVisiblePriceAxisNumLevels() {
+        const chartAreaHeight = this.chartHeight - this.volumeHeight;
+        if (chartAreaHeight <= 0) return 8;
+        const minGapPx = 20;
+        const raw = Math.floor(chartAreaHeight / minGapPx) + 1;
+        return Math.max(7, Math.min(raw, 48));
+    }
     
     drawGrid() {
         // Dashed grid lines
@@ -2917,8 +2960,8 @@ class CandlestickChart {
         
         // Horizontal grid lines (price levels) - based on visible range
         const visiblePriceRange = this.visibleMaxPrice - this.visibleMinPrice;
-        const numPriceLines = 5;
-        const priceStep = visiblePriceRange / (numPriceLines - 1);
+        const numPriceLines = this.getVisiblePriceAxisNumLevels();
+        const priceStep = numPriceLines > 1 ? visiblePriceRange / (numPriceLines - 1) : 0;
         
         for (let i = 0; i < numPriceLines; i++) {
             const price = this.visibleMinPrice + i * priceStep;
@@ -3184,8 +3227,8 @@ class CandlestickChart {
     drawYAxis() {
         // Calculate price levels based on visible range
         const visiblePriceRange = this.visibleMaxPrice - this.visibleMinPrice;
-        const numLevels = 5;
-        const priceStep = visiblePriceRange / (numLevels - 1);
+        const numLevels = this.getVisiblePriceAxisNumLevels();
+        const priceStep = numLevels > 1 ? visiblePriceRange / (numLevels - 1) : 0;
         
         this.ctx.fillStyle = '#fff';
         this.ctx.font = '11px sans-serif';
