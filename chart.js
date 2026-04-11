@@ -649,11 +649,12 @@ class CandlestickChart {
 
             if (absY < 0.5) return;
 
-            // Вертикальный зум: масштаб от точки под курсором (время под курсором не смещается), без привязки к endTime.
+            // Вертикальный зум по колесу: масштаб по времени относительно центра области графика (не курсора), чтобы не «уезжало» вправо/влево.
             const smoothFactor = Math.exp(-e.deltaY * 0.0012);
             const zoomFactor = Math.max(0.985, Math.min(1.015, smoothFactor));
             const newTimeRange = Math.max(this.timeRange * 0.005, currentTimeRange / zoomFactor);
-            const anchorTime = this.xToTime(mouseX);
+            const centerChartX = this.padding.left + (this.chartWidth > 0 ? this.chartWidth * 0.5 : 0);
+            const anchorTime = this.xToTime(centerChartX);
             let f = currentTimeRange > 0 ? (anchorTime - t0) / currentTimeRange : 0.5;
             if (!Number.isFinite(f)) f = 0.5;
             f = Math.max(0, Math.min(1, f));
@@ -1278,7 +1279,12 @@ class CandlestickChart {
                     this.freeChartViewActive = true;
                 }
                 const zoomAxis = this.zoomDragAxis || 'both';
-                const normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
+                // Клик по правой оси цены даёт X у правого края — старый normX≈1 тянул масштаб вправо. Для масштаба по цене якорим время по центру графика.
+                let normX = this.chartWidth > 0 ? (this.zoomDragStartX - this.padding.left) / this.chartWidth : 0.5;
+                if (zoomAxis === 'price' || zoomAxis === 'both') {
+                    normX = 0.5;
+                }
+                normX = Math.max(0, Math.min(1, normX));
                 const pivotTime = this.zoomDragStartVisible.startTime + normX * (this.zoomDragStartVisible.endTime - this.zoomDragStartVisible.startTime);
                 const timeMultRaw = (zoomAxis === 'time') ? (1 + deltaX / 400) : (1 - deltaX / 400);
                 const timeMult = Math.max(0.05, Math.min(3, timeMultRaw));
