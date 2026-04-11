@@ -4,56 +4,6 @@ class CandlestickChart {
     static PRICE_AXIS_FONT_SM = '300 10px system-ui, -apple-system, "Segoe UI", sans-serif';
     static PRICE_AXIS_FONT_LG = '300 12px system-ui, -apple-system, "Segoe UI", sans-serif';
 
-    /**
-     * Курсоры осей: растровый PNG через canvas (data URL). SVG в cursor: url() часто не работает
-     * (file://, ограничения движков). Контуры совпадают с cursors/axis-time.svg и axis-price.svg.
-     */
-    static _timeAxisCursorCss = null;
-    static _priceAxisCursorCss = null;
-
-    static getCursorTimeAxisCss() {
-        if (!CandlestickChart._timeAxisCursorCss) {
-            CandlestickChart._timeAxisCursorCss = CandlestickChart._makeAxisCursorUrlFromPolygons([
-                [1, 16, 7, 21, 7, 18, 14, 18, 14, 14, 7, 14, 7, 11, 1, 16],
-                [31, 16, 25, 11, 25, 14, 19, 14, 19, 18, 25, 18, 25, 21, 31, 16]
-            ]);
-        }
-        return CandlestickChart._timeAxisCursorCss;
-    }
-
-    static getCursorPriceAxisCss() {
-        if (!CandlestickChart._priceAxisCursorCss) {
-            CandlestickChart._priceAxisCursorCss = CandlestickChart._makeAxisCursorUrlFromPolygons([
-                [16, 1, 11, 7, 14, 7, 14, 14, 18, 14, 18, 7, 21, 7, 16, 1],
-                [16, 31, 21, 25, 18, 25, 18, 19, 14, 19, 14, 25, 11, 25, 16, 31]
-            ]);
-        }
-        return CandlestickChart._priceAxisCursorCss;
-    }
-
-    static _makeAxisCursorUrlFromPolygons(flatPolygons) {
-        if (typeof document === 'undefined') return 'inherit';
-        const c = document.createElement('canvas');
-        c.width = 32;
-        c.height = 32;
-        const ctx = c.getContext('2d');
-        if (!ctx) return 'inherit';
-        ctx.strokeStyle = '#e8e8e8';
-        ctx.lineWidth = 2;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        for (const pts of flatPolygons) {
-            ctx.beginPath();
-            ctx.moveTo(pts[0], pts[1]);
-            for (let i = 2; i < pts.length; i += 2) {
-                ctx.lineTo(pts[i], pts[i + 1]);
-            }
-            ctx.closePath();
-            ctx.stroke();
-        }
-        return `url("${c.toDataURL('image/png')}") 16 16`;
-    }
-
     constructor(canvasId) {
         this.canvas = document.getElementById(canvasId);
         if (!this.canvas) {
@@ -1949,8 +1899,8 @@ class CandlestickChart {
         const inTime = this.isPointInTimeAxisArea(x, y);
         const inPrice = this.isPointInPriceAxisStrip(x, y);
         if (inTime && inPrice) return 'nwse-resize';
-        if (inTime) return `${CandlestickChart.getCursorTimeAxisCss()}, ew-resize`;
-        if (inPrice) return `${CandlestickChart.getCursorPriceAxisCss()}, ns-resize`;
+        if (inTime) return 'ew-resize';
+        if (inPrice) return 'ns-resize';
         return null;
     }
 
@@ -3948,7 +3898,7 @@ class CandlestickChart {
         
         // Draw completed selections (привязка к данным: time/price -> x,y)
         this.rulerSelections.forEach((selection, index) => {
-            const selected = this.selectedDrawing?.type === 'ruler' && this.selectedDrawing?.index === index;
+            const selected = this.isDrawingHoveredOrSelected('ruler', index);
             let x1, y1, x2, y2;
             if (selection.time1 != null && selection.price1 != null) {
                 x1 = this.timeToX(selection.time1);
@@ -3967,10 +3917,10 @@ class CandlestickChart {
             const clippedWidth = Math.min(maxX, x + width) - clippedX;
             const clippedHeight = Math.min(maxY, y + height) - clippedY;
             if (clippedWidth > 0 && clippedHeight > 0) {
-                this.ctx.fillStyle = selected ? 'rgba(255, 167, 38, 0.25)' : 'rgba(76, 175, 80, 0.3)';
+                this.ctx.fillStyle = 'rgba(76, 175, 80, 0.3)';
                 this.ctx.fillRect(clippedX, clippedY, clippedWidth, clippedHeight);
-                this.ctx.strokeStyle = selected ? '#ffa726' : '#4caf50';
-                this.ctx.lineWidth = selected ? 4 : 2;
+                this.ctx.strokeStyle = '#4caf50';
+                this.ctx.lineWidth = selected ? 3 : 2;
                 this.ctx.strokeRect(clippedX, clippedY, clippedWidth, clippedHeight);
                 if (selection.summary) {
                     const direction = y2 < y1 ? 'up' : 'down';
@@ -4216,8 +4166,8 @@ class CandlestickChart {
             this.horizontalLines.forEach((line, index) => {
                 const selected = this.isDrawingHoveredOrSelected('ray', index);
                 const isAlert = !!line.alert;
-                this.ctx.strokeStyle = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
-                this.ctx.lineWidth = selected ? (isAlert ? 1.2 : 4) : 0.6;
+                this.ctx.strokeStyle = isAlert ? '#ff9800' : '#4a9eff';
+                this.ctx.lineWidth = selected ? 1.2 : 0.6;
                 this.ctx.setLineDash(isAlert ? [] : [8, 4]);
                 let x1, y1, x2, y2;
                 if (line.time1 != null && line.price1 != null && line.time2 != null && line.price2 != null) {
@@ -4259,7 +4209,7 @@ class CandlestickChart {
                     this.ctx.stroke();
                     this.ctx.setLineDash([]);
                     const dotR = selected ? 5 : 4;
-                    const dotFill = selected ? '#ffa726' : (isAlert ? '#ff9800' : '#4a9eff');
+                    const dotFill = isAlert ? '#ff9800' : '#4a9eff';
                     const drawEndDot = (gx, gy) => {
                         if (gx >= minX && gx <= maxX && gy >= minY && gy <= maxY) {
                             this.ctx.fillStyle = dotFill;
@@ -4670,8 +4620,7 @@ class CandlestickChart {
         this.ctx.textAlign = 'left';
         this.ctx.textBaseline = 'middle';
         levels.forEach(({ index, price, centerY }) => {
-            const selected = this.isDrawingHoveredOrSelected('ray', index);
-            const color = selected ? '#ffa726' : '#ff9800';
+            const color = '#ff9800';
             const label = this.formatPrice(price);
             const padX = 6;
             const textW = this.ctx.measureText(label).width;
