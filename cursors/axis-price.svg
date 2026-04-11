@@ -1,0 +1,7 @@
+<!-- vertical / price axis  from svgrepo arrow-direction-down-5 -->
+<svg width="32" height="32" viewBox="0 0 32 32" xmlns="http://www.w3.org/2000/svg">
+<g fill="none" stroke="#e8e8e8" stroke-linecap="round" stroke-linejoin="round" stroke-width="2">
+<polygon points="16 31 21 25 18 25 18 19 14 19 14 25 11 25 16 31"/>
+<polygon points="16 1 11 7 14 7 14 14 18 14 18 7 21 7 16 1"/>
+</g>
+</svg>
